@@ -78,6 +78,38 @@ Avoid:
 Whether those requirements need new code or can reuse existing systems must
 remain unknown until repository evidence is available.
 
+## Architecture neutrality
+
+When repository evidence is missing, describe required capabilities,
+not a specific implementation architecture.
+
+For example:
+
+Prefer:
+
+- "The experiment requires a reliable way to determine reward eligibility."
+- "The experiment requires participation state to remain available across the required test period."
+- "The trust requirements for challenge completion are unknown."
+
+Avoid:
+
+- "A rule engine is required."
+- "A server-authoritative system is required."
+- "A backend eligibility service is required."
+- "A new state model must be created."
+
+Do not introduce production-hardening requirements such as
+server authority, anti-cheat architecture, distributed consistency,
+or backend services unless:
+
+1. they are required by supplied feature constraints, or
+2. repository evidence shows they are relevant.
+
+For an MVP experiment, distinguish between:
+
+- capability required for learning
+- production-grade implementation that may be deferred
+
 ## Effort estimation rules
 
 Effort must be returned using the `EffortRange` structure.
@@ -164,3 +196,21 @@ the smallest technically credible implementation capable of supporting
 the experiment.
 
 Return only the structured output required by the schema.
+
+## Evidence output
+
+For `findings`, include the most important technical conclusions.
+
+For `risks`, include general technical risks that are distinct from
+`integration_risks`.
+
+For `unknowns`, preserve anything that cannot be determined from the
+supplied information.
+
+For `evidence`:
+
+- Do not invent repository evidence.
+- Do not invent evidence IDs.
+- Do not invent file paths, classes, methods, services, or symbols.
+- If no repository/document evidence was supplied, return an empty list.
+- Findings may have an empty `evidence_ids` list during this synthetic test.

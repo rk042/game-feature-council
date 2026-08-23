@@ -3,7 +3,11 @@ from pathlib import Path
 
 from agents import Agent
 
-from council.models import GameDesignResult, TechnicalResult
+from council.models import (
+    AnalyticsResult,
+    GameDesignResult,
+    TechnicalResult,
+)
 
 
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
@@ -32,4 +36,14 @@ def create_technical_agent() -> Agent:
         instructions=load_prompt("technical.md"),
         model=model,
         output_type=TechnicalResult,
+    )
+
+def create_analytics_agent() -> Agent:
+    model = os.environ["COUNCIL_SPECIALIST_MODEL"]
+
+    return Agent(
+        name="Analytics / Experiment Specialist",
+        instructions=load_prompt("analytics.md"),
+        model=model,
+        output_type=AnalyticsResult,
     )
