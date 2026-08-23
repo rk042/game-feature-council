@@ -132,3 +132,14 @@ class AnalyticsResult(SpecialistCommon):
     agent: Literal["analytics"]
 
     experiment: ExperimentDefinition
+
+class ScopeRiskResult(SpecialistCommon):
+    agent: Literal["scope_risk"]
+
+    cheapest_credible_experiment: str
+    removable_scope: list[str]
+    cheaper_test_options: list[str]
+    data_invalidation_risks: list[str]
+    player_trust_risks: list[str]
+    economy_risks: list[str]
+    technical_risks: list[str]

@@ -6,6 +6,7 @@ from agents import Agent
 from council.models import (
     AnalyticsResult,
     GameDesignResult,
+    ScopeRiskResult,
     TechnicalResult,
 )
 
@@ -46,4 +47,14 @@ def create_analytics_agent() -> Agent:
         instructions=load_prompt("analytics.md"),
         model=model,
         output_type=AnalyticsResult,
+    )
+
+def create_scope_risk_agent() -> Agent:
+    model = os.environ["COUNCIL_SPECIALIST_MODEL"]
+
+    return Agent(
+        name="Scope / Risk Specialist",
+        instructions=load_prompt("scope_risk.md"),
+        model=model,
+        output_type=ScopeRiskResult,
     )
