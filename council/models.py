@@ -143,3 +143,23 @@ class ScopeRiskResult(SpecialistCommon):
     player_trust_risks: list[str]
     economy_risks: list[str]
     technical_risks: list[str]
+
+class ProducerResult(BaseModel):
+    confidence: Confidence
+    confidence_reason: str
+
+    agreements: list[str]
+    disagreements: list[str]
+    dependencies: list[str]
+    scope_conflicts: list[str]
+    risk_conflicts: list[str]
+
+    unknowns: list[str]
+    missing_repository_information: list[str]
+    human_decisions_required: list[str]
+
+    proposed_experiment: ExperimentDefinition
+    execution_steps: list[str]
+    effort: EffortRange
+
+    evidence_ids: list[str]

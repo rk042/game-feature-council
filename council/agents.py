@@ -6,6 +6,7 @@ from agents import Agent
 from council.models import (
     AnalyticsResult,
     GameDesignResult,
+    ProducerResult,
     ScopeRiskResult,
     TechnicalResult,
 )
@@ -57,4 +58,14 @@ def create_scope_risk_agent() -> Agent:
         instructions=load_prompt("scope_risk.md"),
         model=model,
         output_type=ScopeRiskResult,
+    )
+
+def create_producer_agent() -> Agent:
+    model = os.environ["COUNCIL_SYNTHESIS_MODEL"]
+
+    return Agent(
+        name="Producer",
+        instructions=load_prompt("producer.md"),
+        model=model,
+        output_type=ProducerResult,
     )
