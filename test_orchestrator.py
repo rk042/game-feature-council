@@ -13,11 +13,14 @@ from council.models import (
     EvidenceType,
     Finding,
     RepositoryEvidence,
+    TokenUsage,
 )
 from council.orchestrator import (
+    AgentCallResult,
     CouncilOrchestrationError,
     render_specialist_input,
     run_council,
+    run_council_with_telemetry,
     validate_producer_evidence,
     validate_specialist_evidence,
 )
@@ -300,6 +303,56 @@ class OrchestratorTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("repo-001", first)
         self.assertIn("src/ExampleFeatureService.py", first)
         self.assertIn("Synthetic repository excerpt.", first)
+
+    async def test_execution_telemetry_aggregates_sdk_reported_usage(self) -> None:
+        usage_by_role = {
+            role: TokenUsage(
+                requests=1,
+                input_tokens=index * 100,
+                output_tokens=index * 10,
+                total_tokens=index * 110,
+            )
+            for index, role in enumerate(OUTPUTS, start=1)
+        }
+
+        async def execute(agent: str, _input_text: str):
+            await asyncio.sleep(0)
+            return AgentCallResult(
+                output=OUTPUTS[agent],
+                usage=usage_by_role[agent],
+            )
+
+        with self._patched_agent_factories():
+            execution = await run_council_with_telemetry(
+                FEATURE,
+                self._context(),
+                execute,
+            )
+
+        self.assertEqual(set(execution.telemetry.roles), set(OUTPUTS))
+        self.assertTrue(
+            all(
+                role.duration_ms >= 0
+                for role in execution.telemetry.roles.values()
+            )
+        )
+        self.assertGreaterEqual(execution.telemetry.total_duration_ms, 0)
+        self.assertEqual(
+            execution.telemetry.total_usage.requests,
+            sum(usage.requests for usage in usage_by_role.values()),
+        )
+        self.assertEqual(
+            execution.telemetry.total_usage.input_tokens,
+            sum(usage.input_tokens for usage in usage_by_role.values()),
+        )
+        self.assertEqual(
+            execution.telemetry.total_usage.output_tokens,
+            sum(usage.output_tokens for usage in usage_by_role.values()),
+        )
+        self.assertEqual(
+            execution.telemetry.total_usage.total_tokens,
+            sum(usage.total_tokens for usage in usage_by_role.values()),
+        )
 
     def _patched_agent_factories(self):
         return patch.multiple(

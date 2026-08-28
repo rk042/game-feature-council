@@ -1,7 +1,9 @@
+from datetime import datetime, timezone
+from decimal import Decimal
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class Confidence(str, Enum):
@@ -242,3 +244,85 @@ class CouncilResult(BaseModel):
     scope_risk: ScopeRiskResult
     producer: ProducerResult
     director: DirectorResult
+
+
+class TokenUsage(BaseModel):
+    requests: int = Field(default=0, ge=0)
+    input_tokens: int = Field(default=0, ge=0)
+    output_tokens: int = Field(default=0, ge=0)
+    total_tokens: int = Field(default=0, ge=0)
+
+
+class RoleTelemetry(BaseModel):
+    model: str
+    duration_ms: float = Field(ge=0)
+    usage: TokenUsage
+
+
+class CouncilTelemetry(BaseModel):
+    started_at: datetime
+    total_duration_ms: float = Field(ge=0)
+    roles: dict[str, RoleTelemetry]
+    total_usage: TokenUsage
+
+    @field_validator("started_at")
+    @classmethod
+    def normalize_started_at(cls, value: datetime) -> datetime:
+        return _as_utc(value)
+
+
+class CouncilExecution(BaseModel):
+    result: CouncilResult
+    telemetry: CouncilTelemetry
+
+
+class HumanAction(str, Enum):
+    ACCEPT = "accept"
+    REJECT = "reject"
+    MODIFY = "modify"
+
+
+class HumanDecision(BaseModel):
+    action: HumanAction
+    final_decision: DirectorDecision | None = None
+    note: str | None = None
+    timestamp: datetime
+
+    @field_validator("timestamp")
+    @classmethod
+    def normalize_timestamp(cls, value: datetime) -> datetime:
+        return _as_utc(value)
+
+    @model_validator(mode="after")
+    def validate_final_decision(self) -> "HumanDecision":
+        if self.action in {HumanAction.ACCEPT, HumanAction.MODIFY}:
+            if self.final_decision is None:
+                raise ValueError(
+                    f"{self.action.value} requires a final decision"
+                )
+        return self
+
+
+class RunRecord(BaseModel):
+    run_id: str
+    feature_input: str
+
+    repository_path: str
+    repository_commit_sha: str
+    repository_branch: str | None
+    working_tree_dirty: bool
+
+    telemetry: CouncilTelemetry
+    estimated_cost_usd: Decimal | None
+    unpriced_models: list[str] = Field(default_factory=list)
+    pricing_snapshot_id: str
+
+    council_result: CouncilResult
+    ai_recommendation: DirectorDecision
+    human_decision: HumanDecision | None = None
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("timestamp must be timezone-aware")
+    return value.astimezone(timezone.utc)

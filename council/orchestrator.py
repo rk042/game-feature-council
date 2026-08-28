@@ -1,6 +1,9 @@
 import asyncio
 import json
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from time import perf_counter
 from typing import TypeVar, cast
 
 from agents import Agent, Runner
@@ -20,19 +23,34 @@ from council.context import (
 )
 from council.models import (
     AnalyticsResult,
+    CouncilExecution,
+    CouncilTelemetry,
     ContextBundle,
     CouncilResult,
     DirectorResult,
     EvidenceType,
     GameDesignResult,
     ProducerResult,
+    RoleTelemetry,
     ScopeRiskResult,
     SpecialistCommon,
     TechnicalResult,
+    TokenUsage,
 )
 
 
-AgentExecutor = Callable[[Agent, str], Awaitable[BaseModel]]
+@dataclass(frozen=True)
+class AgentCallResult:
+    output: BaseModel
+    usage: TokenUsage
+
+
+AgentExecutor = Callable[
+    [Agent, str],
+    Awaitable[BaseModel | AgentCallResult],
+]
+MonotonicClock = Callable[[], float]
+UtcNow = Callable[[], datetime]
 SpecialistResult = (
     GameDesignResult
     | TechnicalResult
@@ -51,12 +69,37 @@ async def run_council(
     context: ContextBundle,
     agent_executor: AgentExecutor | None = None,
 ) -> CouncilResult:
+    execution = await run_council_with_telemetry(
+        feature,
+        context,
+        agent_executor,
+    )
+    return execution.result
+
+
+async def run_council_with_telemetry(
+    feature: str,
+    context: ContextBundle,
+    agent_executor: AgentExecutor | None = None,
+    *,
+    clock: MonotonicClock = perf_counter,
+    utc_now: UtcNow | None = None,
+) -> CouncilExecution:
     execute = agent_executor or _execute_agent
+    started_at = (utc_now or _utc_now)()
+    total_started = clock()
     specialist_input = render_specialist_input(feature, context)
 
-    game_design, technical, analytics, scope_risk = await _run_specialists(
+    (
+        game_design,
+        technical,
+        analytics,
+        scope_risk,
+        specialist_telemetry,
+    ) = await _run_specialists(
         specialist_input,
         execute,
+        clock,
     )
     validate_specialist_evidence(
         context,
@@ -73,12 +116,14 @@ async def run_council(
         analytics,
         scope_risk,
     )
-    producer = await _run_typed_agent(
+    producer, producer_telemetry = await _run_typed_agent(
+        "producer",
         "Producer",
         create_producer_agent(),
         producer_input,
         ProducerResult,
         execute,
+        clock,
     )
     validate_producer_evidence(context, producer)
 
@@ -90,15 +135,17 @@ async def run_council(
         scope_risk,
         producer,
     )
-    director = await _run_typed_agent(
+    director, director_telemetry = await _run_typed_agent(
+        "director",
         "Game Director",
         create_director_agent(),
         director_input,
         DirectorResult,
         execute,
+        clock,
     )
 
-    return CouncilResult(
+    council_result = CouncilResult(
         context=context,
         game_design=game_design,
         technical=technical,
@@ -106,6 +153,20 @@ async def run_council(
         scope_risk=scope_risk,
         producer=producer,
         director=director,
+    )
+    role_telemetry = {
+        **specialist_telemetry,
+        "producer": producer_telemetry,
+        "director": director_telemetry,
+    }
+    return CouncilExecution(
+        result=council_result,
+        telemetry=CouncilTelemetry(
+            started_at=started_at,
+            total_duration_ms=(clock() - total_started) * 1_000,
+            roles=role_telemetry,
+            total_usage=_aggregate_usage(role_telemetry),
+        ),
     )
 
 
@@ -258,48 +319,58 @@ def validate_producer_evidence(
 async def _run_specialists(
     specialist_input: str,
     execute: AgentExecutor,
+    clock: MonotonicClock,
 ) -> tuple[
     GameDesignResult,
     TechnicalResult,
     AnalyticsResult,
     ScopeRiskResult,
+    dict[str, RoleTelemetry],
 ]:
     try:
         async with asyncio.TaskGroup() as task_group:
             game_design_task = task_group.create_task(
                 _run_typed_agent(
+                    "game_design",
                     "Game Design specialist",
                     create_game_design_agent(),
                     specialist_input,
                     GameDesignResult,
                     execute,
+                    clock,
                 )
             )
             technical_task = task_group.create_task(
                 _run_typed_agent(
+                    "technical",
                     "Technical specialist",
                     create_technical_agent(),
                     specialist_input,
                     TechnicalResult,
                     execute,
+                    clock,
                 )
             )
             analytics_task = task_group.create_task(
                 _run_typed_agent(
+                    "analytics",
                     "Analytics specialist",
                     create_analytics_agent(),
                     specialist_input,
                     AnalyticsResult,
                     execute,
+                    clock,
                 )
             )
             scope_risk_task = task_group.create_task(
                 _run_typed_agent(
+                    "scope_risk",
                     "Scope / Risk specialist",
                     create_scope_risk_agent(),
                     specialist_input,
                     ScopeRiskResult,
                     execute,
+                    clock,
                 )
             )
     except* CouncilOrchestrationError as error_group:
@@ -308,28 +379,50 @@ async def _run_specialists(
             "Specialist phase failed: " + "; ".join(messages)
         ) from error_group
 
+    game_design, game_design_telemetry = game_design_task.result()
+    technical, technical_telemetry = technical_task.result()
+    analytics, analytics_telemetry = analytics_task.result()
+    scope_risk, scope_risk_telemetry = scope_risk_task.result()
     return (
-        game_design_task.result(),
-        technical_task.result(),
-        analytics_task.result(),
-        scope_risk_task.result(),
+        game_design,
+        technical,
+        analytics,
+        scope_risk,
+        {
+            "game_design": game_design_telemetry,
+            "technical": technical_telemetry,
+            "analytics": analytics_telemetry,
+            "scope_risk": scope_risk_telemetry,
+        },
     )
 
 
-async def _execute_agent(agent: Agent, input_text: str) -> BaseModel:
+async def _execute_agent(agent: Agent, input_text: str) -> AgentCallResult:
     result = await Runner.run(agent, input_text)
-    return result.final_output
+    sdk_usage = result.context_wrapper.usage
+    return AgentCallResult(
+        output=result.final_output,
+        usage=TokenUsage(
+            requests=sdk_usage.requests,
+            input_tokens=sdk_usage.input_tokens,
+            output_tokens=sdk_usage.output_tokens,
+            total_tokens=sdk_usage.total_tokens,
+        ),
+    )
 
 
 async def _run_typed_agent(
+    role_key: str,
     role: str,
     agent: Agent,
     input_text: str,
     expected_type: type[ResultType],
     execute: AgentExecutor,
-) -> ResultType:
+    clock: MonotonicClock,
+) -> tuple[ResultType, RoleTelemetry]:
+    started = clock()
     try:
-        output = await execute(agent, input_text)
+        execution = await execute(agent, input_text)
     except asyncio.CancelledError:
         raise
     except Exception as error:
@@ -337,12 +430,56 @@ async def _run_typed_agent(
             f"{role} execution failed: {error}"
         ) from error
 
+    duration_ms = (clock() - started) * 1_000
+    if isinstance(execution, AgentCallResult):
+        output = execution.output
+        usage = execution.usage
+    else:
+        output = execution
+        usage = TokenUsage()
+
     if not isinstance(output, expected_type):
         raise CouncilOrchestrationError(
             f"{role} returned {type(output).__name__}; "
             f"expected {expected_type.__name__}."
         )
-    return cast(ResultType, output)
+    return (
+        cast(ResultType, output),
+        RoleTelemetry(
+            model=_agent_model_name(agent),
+            duration_ms=duration_ms,
+            usage=usage,
+        ),
+    )
+
+
+def _aggregate_usage(
+    roles: dict[str, RoleTelemetry],
+) -> TokenUsage:
+    return TokenUsage(
+        requests=sum(role.usage.requests for role in roles.values()),
+        input_tokens=sum(role.usage.input_tokens for role in roles.values()),
+        output_tokens=sum(role.usage.output_tokens for role in roles.values()),
+        total_tokens=sum(role.usage.total_tokens for role in roles.values()),
+    )
+
+
+def _agent_model_name(agent: Agent) -> str:
+    model = getattr(agent, "model", None)
+    if isinstance(model, str):
+        return model
+    if model is not None:
+        model_name = getattr(model, "model", None) or getattr(model, "name", None)
+        if isinstance(model_name, str):
+            return model_name
+        return type(model).__name__
+    if isinstance(agent, str):
+        return agent
+    return type(agent).__name__
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def _collect_repository_evidence_ids(
