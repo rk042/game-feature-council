@@ -10,13 +10,7 @@ from pathlib import Path
 from time import perf_counter
 from uuid import uuid4
 
-from council.agents import load_prompt
-from council.context import ContextBuilderError, build_context
-from council.evaluation import (
-    EvaluationError,
-    create_comparison_record,
-    run_generalist,
-)
+from council.evaluation import prompt_for_comparison_review
 from council.models import (
     ContextBundle,
     CouncilExecution,
@@ -24,18 +18,14 @@ from council.models import (
     RoleTelemetry,
     TokenUsage,
 )
-from council.orchestrator import (
-    CouncilOrchestrationError,
-    render_specialist_input,
-    run_council_with_telemetry,
-)
 from council.pricing import DEFAULT_PRICING_SNAPSHOT, estimate_cost
 from council.reporting import (
+    ReviewArtifacts,
     RunArtifactError,
-    create_run_record,
-    write_evaluation_artifacts,
-    write_generalist_artifacts,
-    write_run_artifacts,
+    load_review_artifacts,
+    prompt_for_human_decision,
+    update_comparison_with_human_review,
+    update_run_with_human_decision,
 )
 
 
@@ -123,6 +113,16 @@ def build_parser() -> argparse.ArgumentParser:
         default="runs",
         help="Artifact root directory (default: runs).",
     )
+    review_parser = commands.add_parser(
+        "review",
+        help="Complete pending human review for an existing run.",
+    )
+    review_parser.add_argument("--run", required=True)
+    review_parser.add_argument(
+        "--output-dir",
+        default="runs",
+        help="Artifact root directory containing the run (default: runs).",
+    )
     return parser
 
 
@@ -138,6 +138,12 @@ def main(
 ) -> int:
     args = parse_args(argv)
     try:
+        if args.command == "review":
+            return _review_command(
+                args,
+                input_fn=input_fn,
+                print_fn=print_fn,
+            )
         return asyncio.run(
             _run_command(args, input_fn=input_fn, print_fn=print_fn)
         )
@@ -151,6 +157,15 @@ def main(
             print_fn("Execution stopped before any API calls.")
         else:
             print_fn("Execution stopped; no successful run was completed.")
+        return 2
+    except ModuleNotFoundError as error:
+        if args.command != "run" or not _is_missing_agents_dependency(error):
+            raise
+        print_fn(
+            "Error: The run command requires the 'openai-agents' package. "
+            "Install the project run dependencies before model execution."
+        )
+        print_fn("Execution stopped before any API calls.")
         return 2
     except KeyboardInterrupt:
         print_fn("Execution interrupted; no successful run was completed.")
@@ -168,12 +183,205 @@ def sanitize_user_facing_text(
     return sanitized
 
 
+def _is_missing_agents_dependency(error: ModuleNotFoundError) -> bool:
+    missing_name = error.name or ""
+    return missing_name == "agents" or missing_name.startswith("agents.")
+
+
+def build_context(repository_path: str, feature: str) -> ContextBundle:
+    from council.context import build_context as build
+
+    return build(repository_path, feature)
+
+
+async def run_council_with_telemetry(
+    feature: str,
+    context: ContextBundle,
+) -> CouncilExecution:
+    from council.orchestrator import run_council_with_telemetry as run
+
+    return await run(feature, context)
+
+
+async def run_generalist(
+    feature: str,
+    context: ContextBundle,
+) -> GeneralistExecution:
+    from council.evaluation import run_generalist as run
+
+    return await run(feature, context)
+
+
+def render_specialist_input(feature: str, context: ContextBundle) -> str:
+    from council.orchestrator import render_specialist_input as render
+
+    return render(feature, context)
+
+
+def load_prompt(filename: str) -> str:
+    from council.agents import load_prompt as load
+
+    return load(filename)
+
+
+def _review_command(
+    args: argparse.Namespace,
+    *,
+    input_fn: Callable[[str], str],
+    print_fn: Callable[[str], None],
+) -> int:
+    try:
+        artifacts = load_review_artifacts(args.output_dir, args.run)
+    except (RunArtifactError, OSError, ValueError) as error:
+        raise CliError(str(error), before_api_calls=True) from error
+
+    _print_review_summary(artifacts, print_fn)
+    if artifacts.generalist is not None:
+        print_fn(
+            "Generalist-only runs do not have a Council Product/Director "
+            "human-review contract."
+        )
+        print_fn("Human review complete")
+        print_fn("Product/Director: not available for this run")
+        print_fn("Council vs Generalist: not available for this run")
+        print_fn("Updated: none")
+        return 0
+
+    record = artifacts.run_record
+    if record is None:
+        raise CliError(
+            "Run does not contain a Council or Generalist result.",
+            before_api_calls=True,
+        )
+
+    comparison = artifacts.comparison
+    changed_files: list[Path] = []
+    try:
+        if record.human_decision is None:
+            decision = prompt_for_human_decision(
+                record.council_result.director,
+                input_fn=input_fn,
+                print_fn=print_fn,
+            )
+            record = update_run_with_human_decision(
+                artifacts.run_directory,
+                decision,
+            )
+            changed_files.extend(
+                [
+                    artifacts.run_directory / "run.json",
+                    artifacts.run_directory / "report.md",
+                ]
+            )
+
+        if comparison is not None and comparison.human_review is None:
+            review = prompt_for_comparison_review(
+                input_fn=input_fn,
+                print_fn=print_fn,
+            )
+            comparison = update_comparison_with_human_review(
+                artifacts.run_directory,
+                review,
+            )
+            changed_files.extend(
+                [
+                    artifacts.run_directory / "comparison.json",
+                    artifacts.run_directory / "report.md",
+                ]
+            )
+    except EOFError as error:
+        raise CliError(
+            "Human review input ended before review was complete.",
+            before_api_calls=True,
+        ) from error
+    except (RunArtifactError, OSError, ValueError) as error:
+        raise CliError(
+            f"Human review persistence failed: {error}",
+            before_api_calls=True,
+        ) from error
+
+    print_fn("Human review complete")
+    human_decision = record.human_decision
+    product_status = (
+        human_decision.action.value if human_decision is not None else "pending"
+    )
+    print_fn(f"Product/Director: {product_status}")
+    if comparison is None:
+        print_fn("Council vs Generalist: not available for this run")
+    elif comparison.human_review is None:
+        print_fn("Council vs Generalist: pending")
+    else:
+        print_fn(
+            "Council vs Generalist: "
+            f"{comparison.human_review.preference.value}"
+        )
+
+    unique_changed_files = list(dict.fromkeys(changed_files))
+    if unique_changed_files:
+        print_fn("Updated:")
+        for path in unique_changed_files:
+            print_fn(str(path))
+    else:
+        print_fn("Updated: none")
+    return 0
+
+
+def _print_review_summary(
+    artifacts: ReviewArtifacts,
+    print_fn: Callable[[str], None],
+) -> None:
+    print_fn(f"Run: {artifacts.run_directory.name}")
+    if artifacts.generalist is not None:
+        print_fn(
+            f"AI recommendation: {artifacts.generalist.result.decision.value}"
+        )
+        print_fn("Product/Director review: Not available")
+        print_fn("Council comparison review: Not available")
+        return
+
+    record = artifacts.run_record
+    if record is None:
+        raise CliError(
+            "Run does not contain a reviewable result.",
+            before_api_calls=True,
+        )
+    print_fn(f"AI recommendation: {record.ai_recommendation.value}")
+    human_decision = record.human_decision
+    if human_decision is None:
+        print_fn("Product/Director review: Pending")
+    else:
+        print_fn("Product/Director review: already completed")
+        print_fn(f"Action: {human_decision.action.value}")
+        final_decision = (
+            human_decision.final_decision.value
+            if human_decision.final_decision is not None
+            else "None"
+        )
+        print_fn(f"Final decision: {final_decision}")
+
+    comparison = artifacts.comparison
+    if comparison is None:
+        print_fn("Council comparison review: Not available")
+        print_fn(
+            "Council-vs-Generalist comparison: not available for this run"
+        )
+    elif comparison.human_review is None:
+        print_fn("Council comparison review: Pending")
+    else:
+        print_fn("Council comparison review: already completed")
+        print_fn(f"Preference: {comparison.human_review.preference.value}")
+
+
 async def _run_command(
     args: argparse.Namespace,
     *,
     input_fn: Callable[[str], str],
     print_fn: Callable[[str], None],
 ) -> int:
+    from council.context import ContextBuilderError
+    from council.evaluation import EvaluationError
+    from council.orchestrator import CouncilOrchestrationError
+
     feature = _read_feature_file(args.feature_file)
     try:
         context = build_context(args.repo, feature)
@@ -527,6 +735,14 @@ def _write_mode_artifacts(
     output_root: Path,
     started_at: datetime,
 ) -> tuple[str, Path, Path]:
+    from council.evaluation import create_comparison_record
+    from council.reporting import (
+        create_run_record,
+        write_evaluation_artifacts,
+        write_generalist_artifacts,
+        write_run_artifacts,
+    )
+
     if mode == MODE_GENERALIST:
         if generalist_execution is None:
             raise ValueError("Generalist execution is missing.")

@@ -1,7 +1,9 @@
+import hashlib
 import json
 import re
 import unicodedata
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -47,6 +49,16 @@ EXPECTED_GENERALIST_ARTIFACT_FILES = frozenset(
     {"input.json", "context.json", "generalist.json", "report.md"}
 )
 _SAFE_RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+_WINDOWS_RESERVED_NAMES = frozenset(
+    {
+        "CON",
+        "PRN",
+        "AUX",
+        "NUL",
+        *(f"COM{index}" for index in range(1, 10)),
+        *(f"LPT{index}" for index in range(1, 10)),
+    }
+)
 _ROLE_ORDER = (
     "game_design",
     "technical",
@@ -59,6 +71,14 @@ _ROLE_ORDER = (
 
 class RunArtifactError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class ReviewArtifacts:
+    run_directory: Path
+    run_record: RunRecord | None
+    comparison: ComparisonRecord | None
+    generalist: GeneralistExecution | None
 
 
 def create_run_record(
@@ -233,15 +253,31 @@ def update_run_with_human_decision(
     directory = Path(run_directory).expanduser().resolve()
     record = _read_run_record(directory)
     _validate_human_decision(human_decision, record.ai_recommendation)
+    if record.human_decision is not None:
+        if record.human_decision == human_decision:
+            return record
+        raise RunArtifactError(
+            "Product/Director human review is already completed."
+        )
+
+    run_path = _existing_artifact_path(directory, "run.json")
+    report_path = _existing_artifact_path(directory, "report.md")
+    comparison = _read_optional_comparison(directory)
+    if comparison is not None:
+        if comparison.council_run_id != record.run_id:
+            raise RunArtifactError(
+                "Comparison record does not belong to this council run."
+            )
+        _validate_comparison_identity(record, comparison)
 
     updated_record = record.model_copy(
         update={"human_decision": human_decision}
     )
-    _write_json(directory / "run.json", updated_record.model_dump(mode="json"))
-    (directory / "report.md").write_text(
+    _write_json(run_path, updated_record.model_dump(mode="json"))
+    report_path.write_text(
         render_markdown_report(
             updated_record,
-            _read_optional_comparison(directory),
+            comparison,
         ),
         encoding="utf-8",
     )
@@ -286,11 +322,8 @@ def update_comparison_with_human_review(
 ) -> ComparisonRecord:
     directory = Path(run_directory).expanduser().resolve()
     record = _read_run_record(directory)
-    comparison_path = directory / "comparison.json"
-    if not comparison_path.is_file():
-        raise RunArtifactError(
-            f"Comparison artifact does not exist: {comparison_path}"
-        )
+    comparison_path = _existing_artifact_path(directory, "comparison.json")
+    report_path = _existing_artifact_path(directory, "report.md")
 
     try:
         comparison = ComparisonRecord.model_validate_json(
@@ -304,10 +337,17 @@ def update_comparison_with_human_review(
         raise RunArtifactError(
             "Comparison record does not belong to this council run."
         )
+    _validate_comparison_identity(record, comparison)
+    if comparison.human_review is not None:
+        if comparison.human_review == human_review:
+            return comparison
+        raise RunArtifactError(
+            "Council-vs-Generalist human review is already completed."
+        )
 
     updated = comparison.model_copy(update={"human_review": human_review})
     _write_json(comparison_path, updated.model_dump(mode="json"))
-    (directory / "report.md").write_text(
+    report_path.write_text(
         render_markdown_report(record, updated),
         encoding="utf-8",
     )
@@ -497,8 +537,7 @@ def _create_run_directory(
         raise RunArtifactError(
             f"Output root is not an existing directory: {root}"
         )
-    if _SAFE_RUN_ID.fullmatch(run_id) is None:
-        raise RunArtifactError(f"Unsafe run ID: {run_id!r}")
+    _validate_safe_run_id(run_id)
 
     target_repository = Path(repository_path).expanduser().resolve()
     if _is_within(root, target_repository):
@@ -692,9 +731,10 @@ def _human_decision_lines(record: RunRecord) -> list[str]:
 
 
 def _read_run_record(directory: Path) -> RunRecord:
-    run_path = directory / "run.json"
-    if not directory.is_dir() or not run_path.is_file():
+    directory = Path(directory).expanduser().resolve()
+    if not directory.is_dir():
         raise RunArtifactError(f"Not a council run directory: {directory}")
+    run_path = _existing_artifact_path(directory, "run.json")
 
     try:
         record = RunRecord.model_validate_json(
@@ -708,6 +748,26 @@ def _read_run_record(directory: Path) -> RunRecord:
         raise RunArtifactError(
             "Run directory name does not match the persisted run ID."
         )
+    if record.ai_recommendation != record.council_result.director.decision:
+        raise RunArtifactError(
+            "Persisted AI recommendation does not match the Director result."
+        )
+    context = record.council_result.context
+    if (
+        record.feature_input != context.feature_input
+        or record.repository_path != context.repository_path
+        or record.repository_commit_sha != context.commit_sha
+        or record.repository_branch != context.branch
+        or record.working_tree_dirty != context.working_tree_dirty
+    ):
+        raise RunArtifactError(
+            "Persisted run identity does not match the Council ContextBundle."
+        )
+    if record.human_decision is not None:
+        _validate_human_decision(
+            record.human_decision,
+            record.ai_recommendation,
+        )
 
     target_repository = Path(record.repository_path).expanduser().resolve()
     if _is_within(directory, target_repository):
@@ -719,8 +779,9 @@ def _read_run_record(directory: Path) -> RunRecord:
 
 def _read_optional_comparison(directory: Path) -> ComparisonRecord | None:
     comparison_path = directory / "comparison.json"
-    if not comparison_path.is_file():
+    if not comparison_path.exists() and not comparison_path.is_symlink():
         return None
+    comparison_path = _existing_artifact_path(directory, "comparison.json")
     try:
         return ComparisonRecord.model_validate_json(
             comparison_path.read_text(encoding="utf-8")
@@ -729,6 +790,175 @@ def _read_optional_comparison(directory: Path) -> ComparisonRecord | None:
         raise RunArtifactError(
             f"Unable to read comparison record from: {comparison_path}"
         ) from error
+
+
+def load_review_artifacts(
+    output_root: str | Path,
+    run_id: str,
+) -> ReviewArtifacts:
+    directory = _resolve_existing_run_directory(output_root, run_id)
+    run_path = directory / "run.json"
+
+    if run_path.exists() or run_path.is_symlink():
+        record = _read_run_record(directory)
+        comparison = _read_optional_comparison(directory)
+        if comparison is not None and comparison.council_run_id != record.run_id:
+            raise RunArtifactError(
+                "Comparison record does not belong to this council run."
+            )
+        if comparison is not None:
+            _validate_comparison_identity(record, comparison)
+        _existing_artifact_path(directory, "report.md")
+        return ReviewArtifacts(
+            run_directory=directory,
+            run_record=record,
+            comparison=comparison,
+            generalist=None,
+        )
+
+    comparison_path = directory / "comparison.json"
+    if comparison_path.exists() or comparison_path.is_symlink():
+        raise RunArtifactError(
+            "Generalist-only run cannot contain a Council comparison artifact."
+        )
+
+    input_path = directory / "input.json"
+    if not input_path.exists() and not input_path.is_symlink():
+        raise RunArtifactError(
+            f"Required artifact does not exist: {directory / 'run.json'}"
+        )
+
+    generalist = _read_generalist_only_execution(directory, run_id)
+    return ReviewArtifacts(
+        run_directory=directory,
+        run_record=None,
+        comparison=None,
+        generalist=generalist,
+    )
+
+
+def _resolve_existing_run_directory(
+    output_root: str | Path,
+    run_id: str,
+) -> Path:
+    _validate_safe_run_id(run_id)
+    root = Path(output_root).expanduser().resolve()
+    if not root.is_dir():
+        raise RunArtifactError(
+            f"Run output root is not an existing directory: {root}"
+        )
+
+    unresolved_directory = root / run_id
+    if unresolved_directory.is_symlink():
+        raise RunArtifactError(
+            f"Run directory cannot be a symbolic link: {unresolved_directory}"
+        )
+    directory = unresolved_directory.resolve()
+    if not _is_within(directory, root):
+        raise RunArtifactError("Resolved run directory escapes the output root.")
+    if not directory.is_dir():
+        raise RunArtifactError(f"Run was not found: {run_id}")
+    if directory.name != run_id:
+        raise RunArtifactError("Resolved run directory does not match the run ID.")
+    return directory
+
+
+def _read_generalist_only_execution(
+    directory: Path,
+    run_id: str,
+) -> GeneralistExecution:
+    input_path = _existing_artifact_path(directory, "input.json")
+    context_path = _existing_artifact_path(directory, "context.json")
+    generalist_path = _existing_artifact_path(directory, "generalist.json")
+    _existing_artifact_path(directory, "report.md")
+
+    try:
+        input_payload = json.loads(input_path.read_text(encoding="utf-8"))
+        context = ContextBundle.model_validate_json(
+            context_path.read_text(encoding="utf-8")
+        )
+        generalist = GeneralistExecution.model_validate_json(
+            generalist_path.read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError) as error:
+        raise RunArtifactError(
+            f"Unable to read Generalist-only run artifacts from: {directory}"
+        ) from error
+
+    if not isinstance(input_payload, dict):
+        raise RunArtifactError("Generalist input artifact must contain an object.")
+    if input_payload.get("mode") != "generalist":
+        raise RunArtifactError(
+            "Missing run.json is valid only for a Generalist-only run."
+        )
+    if input_payload.get("run_id") != run_id:
+        raise RunArtifactError(
+            "Generalist input run ID does not match the run directory."
+        )
+    feature_input = input_payload.get("feature_input")
+    if not isinstance(feature_input, str):
+        raise RunArtifactError("Generalist input feature is missing or invalid.")
+    feature_sha256 = hashlib.sha256(feature_input.encode("utf-8")).hexdigest()
+    if generalist.feature_sha256 != feature_sha256:
+        raise RunArtifactError(
+            "Generalist feature identity does not match the input artifact."
+        )
+
+    from council.evaluation import build_context_identity
+
+    if generalist.context_identity != build_context_identity(context):
+        raise RunArtifactError(
+            "Generalist context identity does not match the context artifact."
+        )
+    target_repository = Path(context.repository_path).expanduser().resolve()
+    if _is_within(directory, target_repository):
+        raise RunArtifactError(
+            "Run artifacts cannot be reviewed inside the target repository."
+        )
+    return generalist
+
+
+def _validate_comparison_identity(
+    record: RunRecord,
+    comparison: ComparisonRecord,
+) -> None:
+    from council.evaluation import EvaluationError, create_comparison_record
+
+    try:
+        expected = create_comparison_record(record, comparison.generalist)
+    except EvaluationError as error:
+        raise RunArtifactError(
+            "Comparison feature or context identity does not match the Council run."
+        ) from error
+    actual_without_review = comparison.model_copy(update={"human_review": None})
+    if actual_without_review != expected:
+        raise RunArtifactError(
+            "Comparison metrics or identity do not match the Council run."
+        )
+
+
+def _validate_safe_run_id(run_id: str) -> None:
+    reserved_stem = run_id.split(".", 1)[0].upper()
+    if (
+        _SAFE_RUN_ID.fullmatch(run_id) is None
+        or run_id.endswith(".")
+        or reserved_stem in _WINDOWS_RESERVED_NAMES
+    ):
+        raise RunArtifactError(f"Unsafe run ID: {run_id!r}")
+
+
+def _existing_artifact_path(directory: Path, filename: str) -> Path:
+    directory = Path(directory).expanduser().resolve()
+    path = directory / filename
+    if path.is_symlink():
+        raise RunArtifactError(f"Artifact cannot be a symbolic link: {path}")
+    try:
+        resolved = path.resolve(strict=True)
+    except OSError as error:
+        raise RunArtifactError(f"Required artifact does not exist: {path}") from error
+    if not _is_within(resolved, directory) or not resolved.is_file():
+        raise RunArtifactError(f"Unsafe or invalid artifact path: {path}")
+    return resolved
 
 
 def _comparison_report_lines(

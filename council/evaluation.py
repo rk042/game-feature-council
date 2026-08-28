@@ -1,10 +1,12 @@
+from __future__ import annotations
+
 import hashlib
 import json
 from collections.abc import Callable
 from datetime import datetime, timezone
 from time import perf_counter
+from typing import TYPE_CHECKING
 
-from council.agents import create_generalist_agent
 from council.models import (
     ComparisonPathMetrics,
     ComparisonPreference,
@@ -18,19 +20,14 @@ from council.models import (
     HumanComparisonReview,
     RunRecord,
 )
-from council.orchestrator import (
-    AgentExecutor,
-    CouncilOrchestrationError,
-    MonotonicClock,
-    _execute_agent,
-    _run_typed_agent,
-    render_specialist_input,
-)
 from council.pricing import (
     DEFAULT_PRICING_SNAPSHOT,
     PricingSnapshot,
     estimate_cost,
 )
+
+if TYPE_CHECKING:
+    from council.orchestrator import AgentExecutor, MonotonicClock
 
 
 RUBRIC_DIMENSIONS = (
@@ -57,6 +54,13 @@ async def run_generalist(
     pricing: PricingSnapshot = DEFAULT_PRICING_SNAPSHOT,
     clock: MonotonicClock = perf_counter,
 ) -> GeneralistExecution:
+    from council.orchestrator import (
+        CouncilOrchestrationError,
+        _execute_agent,
+        _run_typed_agent,
+        render_specialist_input,
+    )
+
     execute = agent_executor or _execute_agent
     generalist_input = render_specialist_input(feature, context)
 
@@ -83,6 +87,12 @@ async def run_generalist(
         unpriced_models=cost.unpriced_models,
         pricing_snapshot_id=pricing.identifier,
     )
+
+
+def create_generalist_agent():
+    from council.agents import create_generalist_agent as create_agent
+
+    return create_agent()
 
 
 def create_comparison_record(

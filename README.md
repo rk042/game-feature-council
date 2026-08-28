@@ -134,6 +134,19 @@ scores, Generalist/Council/Tie preference, and required reason through
 Review updates persist into the existing JSON/report artifacts without
 rerunning models.
 
+Complete pending human review from the CLI with:
+
+```text
+python -m council review --run <run-id>
+```
+
+Use `--output-dir` when the run was written beneath a non-default artifact
+root. Review is artifact-only: it requires no API key or model configuration
+and makes no model/API calls. The human controls the Product/Director A/R/M
+decision and manually enters all Council-vs-Generalist rubric scores,
+preference, and reason. Existing completed reviews are reported but are not
+silently replaced.
+
 ## Privacy
 
 Real runs send the selected repository-derived excerpts in the bounded
