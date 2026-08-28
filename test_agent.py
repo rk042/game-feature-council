@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 
 from agents import Runner
 
@@ -7,11 +7,11 @@ from council.agents import create_game_design_agent
 
 FEATURE = """
 Feature Name:
-Jungle Rescue
+Repeat Engagement Experiment
 
 Feature Idea:
 Create a 7-day event where players complete one daily challenge
-to protect jungle resources.
+to preserve access to a future opportunity.
 
 If the player does not participate, some future reward opportunities
 become unavailable.

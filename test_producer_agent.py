@@ -19,20 +19,20 @@ from council.models import (
 
 FEATURE = """
 Feature Name:
-Jungle Rescue
+Repeat Engagement Experiment
 
 Feature Idea:
-Create a 7-day event where players complete one daily challenge
-to protect jungle resources.
+Create a multi-step engagement feature where players complete
+a recurring activity.
 
-If the player does not participate, some future reward opportunities
-become unavailable.
+If the player does not participate, a future opportunity may become
+unavailable.
 
 Player/Product Goal:
-Give players a stronger reason to return each day.
+Test whether a visible future consequence increases repeat engagement.
 
 Repository Evidence:
-No repository evidence is available in this synthetic Producer test.
+No repository evidence is available in this synthetic test.
 
 Studio Decision Thresholds:
 No numeric success thresholds have been supplied.
@@ -82,7 +82,7 @@ GAME_DESIGN = GameDesignResult(
         "is visible to the player."
     ),
     unnecessary_complexity=[
-        "Full jungle-resource simulation.",
+        "Additional systems unrelated to the core hypothesis.",
         "Multiple reward systems.",
     ],
 )

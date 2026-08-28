@@ -163,3 +163,35 @@ class ProducerResult(BaseModel):
     effort: EffortRange
 
     evidence_ids: list[str]
+
+class DirectorDecision(str, Enum):
+    GO = "GO"
+    GO_WITH_REDUCED_SCOPE = "GO_WITH_REDUCED_SCOPE"
+    PROTOTYPE_FIRST = "PROTOTYPE_FIRST"
+    NEEDS_MORE_INFORMATION = "NEEDS_MORE_INFORMATION"
+    DO_NOT_BUILD_YET = "DO_NOT_BUILD_YET"
+
+
+class DecisionConditions(BaseModel):
+    scale: list[str]
+    iterate: list[str]
+    kill: list[str]
+    need_more_data: list[str]
+
+
+class DirectorResult(BaseModel):
+    decision: DirectorDecision
+
+    confidence: Confidence
+    confidence_reason: str
+    rationale: list[str]
+
+    experiment: ExperimentDefinition
+    effort: EffortRange
+
+    unresolved_unknowns: list[str]
+    human_decisions_required: list[str]
+
+    decision_conditions: DecisionConditions
+
+    human_approval_required: Literal[True] = True
