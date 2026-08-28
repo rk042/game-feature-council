@@ -8,9 +8,11 @@ from uuid import uuid4
 
 from council.models import (
     ComparisonRecord,
+    ContextBundle,
     CouncilExecution,
     DirectorDecision,
     DirectorResult,
+    GeneralistExecution,
     HumanAction,
     HumanComparisonReview,
     HumanDecision,
@@ -41,6 +43,9 @@ EXPECTED_EVALUATION_ARTIFACT_FILES = EXPECTED_ARTIFACT_FILES | {
     "generalist.json",
     "comparison.json",
 }
+EXPECTED_GENERALIST_ARTIFACT_FILES = frozenset(
+    {"input.json", "context.json", "generalist.json", "report.md"}
+)
 _SAFE_RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 _ROLE_ORDER = (
     "game_design",
@@ -86,30 +91,11 @@ def write_run_artifacts(
     record: RunRecord,
     output_root: str | Path,
 ) -> Path:
-    root = Path(output_root).expanduser().resolve()
-    if not root.is_dir():
-        raise RunArtifactError(
-            f"Output root is not an existing directory: {root}"
-        )
-    if _SAFE_RUN_ID.fullmatch(record.run_id) is None:
-        raise RunArtifactError(f"Unsafe run ID: {record.run_id!r}")
-
-    target_repository = Path(record.repository_path).expanduser().resolve()
-    if _is_within(root, target_repository):
-        raise RunArtifactError(
-            "Run artifacts cannot be written inside the target repository."
-        )
-
-    run_directory = (root / record.run_id).resolve()
-    if not _is_within(run_directory, root):
-        raise RunArtifactError("Resolved run directory escapes the output root.")
-
-    try:
-        run_directory.mkdir()
-    except FileExistsError as error:
-        raise RunArtifactError(
-            f"Run directory already exists: {run_directory}"
-        ) from error
+    run_directory = _create_run_directory(
+        output_root,
+        record.run_id,
+        record.repository_path,
+    )
 
     result = record.council_result
     context = result.context
@@ -155,6 +141,47 @@ def write_run_artifacts(
     )
     (run_directory / "report.md").write_text(
         render_markdown_report(record),
+        encoding="utf-8",
+    )
+    return run_directory
+
+
+def write_generalist_artifacts(
+    run_id: str,
+    feature_input: str,
+    context: ContextBundle,
+    execution: GeneralistExecution,
+    output_root: str | Path,
+    *,
+    started_at: datetime,
+) -> Path:
+    run_directory = _create_run_directory(
+        output_root,
+        run_id,
+        context.repository_path,
+    )
+    input_payload = {
+        "run_id": run_id,
+        "mode": "generalist",
+        "feature_input": feature_input,
+        "repository_path": context.repository_path,
+        "repository_commit_sha": context.commit_sha,
+        "repository_branch": context.branch,
+        "working_tree_dirty": context.working_tree_dirty,
+        "started_at": started_at.isoformat(),
+    }
+
+    _write_json(run_directory / "input.json", input_payload)
+    _write_json(
+        run_directory / "context.json",
+        context.model_dump(mode="json"),
+    )
+    _write_json(
+        run_directory / "generalist.json",
+        execution.model_dump(mode="json"),
+    )
+    (run_directory / "report.md").write_text(
+        _render_generalist_report(run_id, feature_input, context, execution),
         encoding="utf-8",
     )
     return run_directory
@@ -457,6 +484,88 @@ def _write_json(path: Path, payload: object) -> None:
         )
         + "\n",
         encoding="utf-8",
+    )
+
+
+def _create_run_directory(
+    output_root: str | Path,
+    run_id: str,
+    repository_path: str,
+) -> Path:
+    root = Path(output_root).expanduser().resolve()
+    if not root.is_dir():
+        raise RunArtifactError(
+            f"Output root is not an existing directory: {root}"
+        )
+    if _SAFE_RUN_ID.fullmatch(run_id) is None:
+        raise RunArtifactError(f"Unsafe run ID: {run_id!r}")
+
+    target_repository = Path(repository_path).expanduser().resolve()
+    if _is_within(root, target_repository):
+        raise RunArtifactError(
+            "Run artifacts cannot be written inside the target repository."
+        )
+
+    run_directory = (root / run_id).resolve()
+    if not _is_within(run_directory, root):
+        raise RunArtifactError("Resolved run directory escapes the output root.")
+
+    try:
+        run_directory.mkdir()
+    except FileExistsError as error:
+        raise RunArtifactError(
+            f"Run directory already exists: {run_directory}"
+        ) from error
+    return run_directory
+
+
+def _render_generalist_report(
+    run_id: str,
+    feature_input: str,
+    context: ContextBundle,
+    execution: GeneralistExecution,
+) -> str:
+    result = execution.result
+    usage = execution.telemetry.usage
+    cost = (
+        str(execution.estimated_cost_usd)
+        if execution.estimated_cost_usd is not None
+        else "Unavailable"
+    )
+    return "\n".join(
+        [
+            "# Generalist Baseline Report",
+            "",
+            f"- Run ID: `{run_id}`",
+            f"- Repository: `{context.repository_path}`",
+            f"- Commit: `{context.commit_sha}`",
+            f"- Tracked working tree dirty: {context.working_tree_dirty}",
+            "",
+            "## Feature",
+            "",
+            feature_input,
+            "",
+            "## Recommendation",
+            "",
+            f"- Decision: **{result.decision.value}**",
+            f"- Confidence: {result.confidence.value}",
+            f"- Confidence reason: {result.confidence_reason}",
+            "",
+            "## Runtime",
+            "",
+            f"- Model: `{execution.telemetry.model}`",
+            f"- Duration: {execution.telemetry.duration_ms:.3f} ms",
+            f"- Input tokens: {usage.input_tokens}",
+            f"- Output tokens: {usage.output_tokens}",
+            f"- Total tokens: {usage.total_tokens}",
+            f"- Estimated cost USD: {cost}",
+            f"- Pricing snapshot: `{execution.pricing_snapshot_id}`",
+            "",
+            "## Human Decision",
+            "",
+            "- Status: Pending",
+            "",
+        ]
     )
 
 
