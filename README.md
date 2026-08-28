@@ -5,6 +5,12 @@ read-only snapshot of a Git working tree. It can run the multi-agent Council,
 the single-agent Generalist baseline, or both against the exact same
 `ContextBundle`.
 
+## Documentation
+
+- [Architecture and operating contract](docs/GAME_FEATURE_COUNCIL.md)
+- [Council vs Generalist evaluation](docs/EVALUATION.md)
+- [V1 decision log](docs/DECISIONS.md)
+
 ## Setup
 
 The supported runtime is Python 3.11 or 3.12; the audited Windows environment
