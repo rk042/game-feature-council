@@ -70,6 +70,31 @@ class FakeAgent:
 
 
 class EvaluationTests(unittest.IsolatedAsyncioTestCase):
+    def test_generalist_prompt_gives_experiment_validity_precedence(self) -> None:
+        prompt = Path("prompts/generalist.md").read_text(encoding="utf-8")
+
+        self.assertIn(
+            "Accidentally revoking an already-earned reward is first an "
+            "experiment\nintegrity and implementation failure",
+            prompt,
+        )
+        self.assertIn(
+            "By itself, it belongs under\n`need_more_data`",
+            prompt,
+        )
+        self.assertIn(
+            "credible negative evidence from a valid experiment -> `kill`",
+            prompt,
+        )
+        self.assertIn(
+            "broken or uninterpretable execution -> `need_more_data`",
+            prompt,
+        )
+        self.assertIn("invalid assignment", prompt)
+        self.assertIn("unreliable persistence", prompt)
+        self.assertIn("incorrect eligibility enforcement", prompt)
+        self.assertIn("analytics or instrumentation failure", prompt)
+
     def test_generalist_factory_uses_authoritative_prompt_and_synthesis_model(
         self,
     ) -> None:

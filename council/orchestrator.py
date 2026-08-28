@@ -23,6 +23,7 @@ from council.context import (
 )
 from council.models import (
     AnalyticsResult,
+    Confidence,
     CouncilExecution,
     CouncilTelemetry,
     ContextBundle,
@@ -144,6 +145,7 @@ async def run_council_with_telemetry(
         execute,
         clock,
     )
+    director = _normalize_director_effort_confidence(director)
 
     council_result = CouncilResult(
         context=context,
@@ -314,6 +316,26 @@ def validate_producer_evidence(
         raise CouncilOrchestrationError(
             f"Invalid repository evidence reference in Producer result: {error}"
         ) from error
+
+
+def _normalize_director_effort_confidence(
+    director: DirectorResult,
+) -> DirectorResult:
+    effort = director.effort
+    if (
+        effort.developer_days_min is not None
+        or effort.developer_days_max is not None
+        or effort.confidence == Confidence.LOW
+    ):
+        return director
+
+    return director.model_copy(
+        update={
+            "effort": effort.model_copy(
+                update={"confidence": Confidence.LOW}
+            )
+        }
+    )
 
 
 async def _run_specialists(

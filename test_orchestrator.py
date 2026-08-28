@@ -1,11 +1,13 @@
 import asyncio
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import council.orchestrator as orchestrator_module
 from council.models import (
     ContextBuilderConfig,
     ContextBundle,
+    Confidence,
     CouncilResult,
     DecisionConditions,
     DirectorResult,
@@ -68,6 +70,115 @@ OUTPUTS = {
 
 
 class OrchestratorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_director_null_effort_medium_normalizes_to_low(self) -> None:
+        result = await self._run_with_director_effort(
+            minimum=None,
+            maximum=None,
+            confidence=Confidence.MEDIUM,
+            basis="Arbitrary basis text.",
+        )
+
+        self.assertIsNone(result.director.effort.developer_days_min)
+        self.assertIsNone(result.director.effort.developer_days_max)
+        self.assertEqual(result.director.effort.confidence, Confidence.LOW)
+
+    async def test_director_null_effort_high_normalizes_to_low(self) -> None:
+        result = await self._run_with_director_effort(
+            minimum=None,
+            maximum=None,
+            confidence=Confidence.HIGH,
+            basis="No implementation is required.",
+        )
+
+        self.assertEqual(result.director.effort.confidence, Confidence.LOW)
+
+    async def test_director_null_effort_low_remains_low(self) -> None:
+        result = await self._run_with_director_effort(
+            minimum=None,
+            maximum=None,
+            confidence=Confidence.LOW,
+            basis="The estimate is unavailable.",
+        )
+
+        self.assertEqual(result.director.effort.confidence, Confidence.LOW)
+
+    async def test_director_zero_effort_medium_remains_medium(self) -> None:
+        result = await self._run_with_director_effort(
+            minimum=0,
+            maximum=0,
+            confidence=Confidence.MEDIUM,
+            basis="No developer implementation work is required.",
+        )
+
+        self.assertEqual(result.director.effort.confidence, Confidence.MEDIUM)
+
+    async def test_director_zero_effort_high_remains_high(self) -> None:
+        result = await self._run_with_director_effort(
+            minimum=0,
+            maximum=0,
+            confidence=Confidence.HIGH,
+            basis="No developer implementation work is required.",
+        )
+
+        self.assertEqual(result.director.effort.confidence, Confidence.HIGH)
+
+    async def test_director_numeric_effort_keeps_confidence(self) -> None:
+        result = await self._run_with_director_effort(
+            minimum=2,
+            maximum=5,
+            confidence=Confidence.MEDIUM,
+            basis="Repository evidence supports this range.",
+        )
+
+        self.assertEqual(result.director.effort.confidence, Confidence.MEDIUM)
+
+    async def test_director_effort_normalization_ignores_basis_wording(
+        self,
+    ) -> None:
+        results = [
+            await self._run_with_director_effort(
+                minimum=None,
+                maximum=None,
+                confidence=Confidence.HIGH,
+                basis=basis,
+            )
+            for basis in (
+                "No implementation is required.",
+                "Insufficient evidence for an estimate.",
+                "任意の説明文です。",
+            )
+        ]
+
+        self.assertEqual(
+            [result.director.effort.confidence for result in results],
+            [Confidence.LOW, Confidence.LOW, Confidence.LOW],
+        )
+
+    def test_effort_prompts_share_null_and_zero_contract(self) -> None:
+        for prompt_path in (
+            "prompts/technical.md",
+            "prompts/producer.md",
+            "prompts/director.md",
+            "prompts/generalist.md",
+        ):
+            with self.subTest(prompt=prompt_path):
+                prompt = Path(prompt_path).read_text(encoding="utf-8")
+                self.assertIn(
+                    "`developer_days_min = null` and "
+                    "`developer_days_max = null` mean the",
+                    prompt,
+                )
+                self.assertIn("numeric estimate is unavailable", prompt)
+                self.assertTrue(
+                    "effort confidence must be low" in prompt
+                    or "`effort.confidence` must be `low`" in prompt
+                )
+                self.assertIn(
+                    "`developer_days_min = 0` and "
+                    "`developer_days_max = 0`",
+                    prompt,
+                )
+
     async def test_fixed_concurrent_fan_out_and_sequential_fan_in(self) -> None:
         context = self._context()
         started: set[str] = set()
@@ -364,6 +475,35 @@ class OrchestratorTests(unittest.IsolatedAsyncioTestCase):
             create_producer_agent=lambda: "producer",
             create_director_agent=lambda: "director",
         )
+
+    async def _run_with_director_effort(
+        self,
+        *,
+        minimum: float | None,
+        maximum: float | None,
+        confidence: Confidence,
+        basis: str,
+    ) -> CouncilResult:
+        director = DIRECTOR.model_copy(
+            update={
+                "effort": DIRECTOR.effort.model_copy(
+                    update={
+                        "developer_days_min": minimum,
+                        "developer_days_max": maximum,
+                        "basis": basis,
+                        "confidence": confidence,
+                    }
+                )
+            }
+        )
+
+        async def execute(agent: str, _input_text: str):
+            if agent == "director":
+                return director
+            return OUTPUTS[agent]
+
+        with self._patched_agent_factories():
+            return await run_council(FEATURE, self._context(), execute)
 
     def _context(self, evidence_id: str = "repo-001") -> ContextBundle:
         evidence = RepositoryEvidence(

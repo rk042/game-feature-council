@@ -1,5 +1,6 @@
 import json
 import re
+import unicodedata
 from collections.abc import Callable, Iterable
 from datetime import datetime, timezone
 from pathlib import Path
@@ -354,9 +355,9 @@ def render_markdown_report(
         "",
         *_markdown_bullets(_risks_and_unknowns(record)),
         "",
-        "## Human Decisions Required",
+        _director_questions_heading(record),
         "",
-        *_markdown_bullets(director.human_decisions_required),
+        *_markdown_bullets(_director_question_lines(record)),
         "",
         "## Decision Conditions",
         "",
@@ -484,16 +485,67 @@ def _format_effort_range(
 def _risks_and_unknowns(record: RunRecord) -> list[str]:
     result = record.council_result
     values: list[str] = []
+    retained: list[str] = []
+
+    def retain(label: str, value: str) -> None:
+        if any(_obvious_report_duplicate(value, prior) for prior in retained):
+            return
+        retained.append(value)
+        values.append(f"{label}: {value}")
+
+    # Producer unknowns are consolidated and therefore take precedence over
+    # overlapping specialist wording in the human-facing report.
+    for unknown in result.producer.unknowns:
+        retain("Unknown", unknown)
+
     for specialist in (
         result.game_design,
         result.technical,
         result.analytics,
         result.scope_risk,
     ):
-        values.extend(f"Risk: {risk}" for risk in specialist.risks)
-        values.extend(f"Unknown: {unknown}" for unknown in specialist.unknowns)
-    values.extend(f"Unknown: {unknown}" for unknown in result.producer.unknowns)
+        for risk in specialist.risks:
+            retain("Risk", risk)
+        for unknown in specialist.unknowns:
+            retain("Unknown", unknown)
     return values
+
+
+def _obvious_report_duplicate(candidate: str, retained: str) -> bool:
+    return _normalized_report_words(candidate) == _normalized_report_words(
+        retained
+    )
+
+
+def _normalized_report_words(value: str) -> str:
+    normalized = unicodedata.normalize("NFKC", value).casefold()
+    characters = [
+        " "
+        if character.isspace()
+        or unicodedata.category(character).startswith("P")
+        else character
+        for character in normalized
+    ]
+    collapsed = " ".join("".join(characters).split())
+    if collapsed:
+        return collapsed
+
+    # Punctuation-only values need a non-empty identity so unrelated entries
+    # are not all treated as the same duplicate.
+    return " ".join(normalized.split())
+
+
+def _director_questions_heading(record: RunRecord) -> str:
+    if record.human_decision is None:
+        return "## Human Decisions Required"
+    return "## Director Questions — Resolved by Human Decision"
+
+
+def _director_question_lines(record: RunRecord) -> list[str]:
+    questions = record.council_result.director.human_decisions_required
+    if record.human_decision is None:
+        return questions
+    return [f"Resolved: {question}" for question in questions]
 
 
 def _runtime_role_lines(record: RunRecord) -> list[str]:

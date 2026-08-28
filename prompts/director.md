@@ -130,6 +130,16 @@ that uncertainty.
 
 Do not replace unknown developer effort with a fabricated estimate.
 
+Use this `EffortRange` semantic contract:
+
+- `developer_days_min = null` and `developer_days_max = null` mean the
+  numeric estimate is unavailable; `effort.confidence` must be `low`.
+- If no developer implementation work is required, use
+  `developer_days_min = 0` and `developer_days_max = 0`, with confidence
+  appropriate to the evidence.
+
+State the reason for the range in `effort.basis`.
+
 ## Evidence and grounding
 
 Do not invent repository evidence.

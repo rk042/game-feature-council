@@ -183,6 +183,14 @@ When implementation scope cannot be grounded:
 * effort confidence = low
 * explain what information is missing in the effort basis
 
+Use this `EffortRange` semantic contract:
+
+* `developer_days_min = null` and `developer_days_max = null` mean the
+  numeric estimate is unavailable; effort confidence must be low.
+* If no developer implementation work is required, use
+  `developer_days_min = 0` and `developer_days_max = 0`, with confidence
+  appropriate to the evidence.
+
 Never produce fake precision.
 
 Prefer reasonable ranges rather than exact hour estimates.
@@ -225,6 +233,14 @@ That condition belongs under:
 Do not interpret an invalid experiment as evidence against the
 hypothesis.
 
+Accidentally revoking an already-earned reward is first an experiment
+integrity and implementation failure. By itself, it belongs under
+`need_more_data`; it is not trustworthy negative evidence for `kill`.
+
+Use `kill` only for credible negative product evidence produced by a valid,
+interpretable experiment. Experiment validity takes precedence over the
+apparent direction of an invalid result.
+
 ## Decision conditions
 
 Populate all four:
@@ -258,6 +274,17 @@ The available evidence is missing, invalid, unreliable, confounded, or
 otherwise insufficient for a credible judgement.
 
 Never use `kill` for broken implementation or measurement.
+
+Apply these outcomes in this order:
+
+* valid positive evidence -> `scale`
+* valid useful evidence that indicates a change -> `iterate`
+* credible negative evidence from a valid experiment -> `kill`
+* broken or uninterpretable execution -> `need_more_data`
+
+Broken execution includes invalid assignment, unreliable persistence,
+incorrect eligibility enforcement, analytics or instrumentation failure,
+and any other defect that prevents trustworthy interpretation.
 
 ## Scope
 

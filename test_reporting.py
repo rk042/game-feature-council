@@ -24,6 +24,7 @@ from council.reporting import (
     RunArtifactError,
     create_run_record,
     prompt_for_human_decision,
+    render_markdown_report,
     update_run_with_human_decision,
     write_run_artifacts,
 )
@@ -51,6 +52,181 @@ ROLE_NAMES = (
 
 
 class ReportingTests(unittest.TestCase):
+    def test_report_deduplicates_overlapping_risks_and_unknowns_only(
+        self,
+    ) -> None:
+        record = create_run_record(
+            FEATURE,
+            self._execution("/synthetic/example-repository"),
+            run_id="run-001",
+        )
+        result = record.council_result.model_copy(deep=True)
+        result.producer.unknowns = [
+            "Experiment assignment and analytics reliability are unknown."
+        ]
+        result.game_design.risks = ["Player trust may decline."]
+        result.game_design.unknowns = []
+        result.technical.risks = ["Persistence can fail across sessions."]
+        result.technical.unknowns = []
+        result.analytics.risks = ["Eligibility enforcement may fail."]
+        result.analytics.unknowns = [
+            " experiment assignment and analytics reliability are unknown! "
+        ]
+        result.scope_risk.risks = [
+            "PERSISTENCE can fail across sessions!",
+            "Persistence can fail across sessions and revoke earned rewards.",
+        ]
+        result.scope_risk.unknowns = []
+        record = record.model_copy(update={"council_result": result})
+        structured_before = record.model_dump(mode="json")
+
+        report = render_markdown_report(record)
+        section = report.split("## Risks / Unknowns", 1)[1].split(
+            "## Human Decisions Required",
+            1,
+        )[0]
+
+        self.assertEqual(section.count("\n- "), 5)
+        self.assertEqual(
+            section.count(
+                "Experiment assignment and analytics reliability are unknown."
+            ),
+            1,
+        )
+        self.assertEqual(section.count("Persistence can fail across sessions."), 1)
+        self.assertIn("Player trust may decline.", section)
+        self.assertIn("Eligibility enforcement may fail.", section)
+        self.assertIn(
+            "Persistence can fail across sessions and revoke earned rewards.",
+            section,
+        )
+        self.assertEqual(record.model_dump(mode="json"), structured_before)
+
+    def test_report_deduplication_is_unicode_safe_and_deterministic(
+        self,
+    ) -> None:
+        record = create_run_record(
+            FEATURE,
+            self._execution("/synthetic/example-repository"),
+            run_id="run-001",
+        )
+        result = record.council_result.model_copy(deep=True)
+        result.producer.unknowns = [
+            "СОСТОЯНИЕ：  НЕ СОХРАНЯЕТСЯ！"
+        ]
+        result.game_design.risks = [
+            "保存状態が失われる。",
+            "報酬が二重に付与される。",
+        ]
+        result.game_design.unknowns = []
+        result.technical.risks = ["состояние не сохраняется"]
+        result.technical.unknowns = []
+        result.analytics.risks = [
+            "分组分配不可靠。",
+            "事件数据缺失。",
+        ]
+        result.analytics.unknowns = []
+        result.scope_risk.risks = [
+            "Назначение варианта неверно.",
+            "События аналитики отсутствуют.",
+            "⚠️",
+            "❓",
+            "!!!",
+            "???",
+        ]
+        result.scope_risk.unknowns = []
+        record = record.model_copy(update={"council_result": result})
+        structured_before = record.model_dump(mode="json")
+
+        first = render_markdown_report(record)
+        second = render_markdown_report(record)
+        section = first.split("## Risks / Unknowns", 1)[1].split(
+            "## Human Decisions Required",
+            1,
+        )[0]
+        bullets = [
+            line
+            for line in section.splitlines()
+            if line.startswith("- ")
+        ]
+
+        self.assertEqual(first, second)
+        self.assertEqual(
+            bullets,
+            [
+                "- Unknown: СОСТОЯНИЕ：  НЕ СОХРАНЯЕТСЯ！",
+                "- Risk: 保存状態が失われる。",
+                "- Risk: 報酬が二重に付与される。",
+                "- Risk: 分组分配不可靠。",
+                "- Risk: 事件数据缺失。",
+                "- Risk: Назначение варианта неверно.",
+                "- Risk: События аналитики отсутствуют.",
+                "- Risk: ⚠️",
+                "- Risk: ❓",
+                "- Risk: !!!",
+                "- Risk: ???",
+            ],
+        )
+        self.assertNotIn("- Risk: состояние не сохраняется", section)
+        self.assertEqual(record.model_dump(mode="json"), structured_before)
+
+    def test_human_decision_questions_are_pending_before_resolution(self) -> None:
+        record = create_run_record(
+            FEATURE,
+            self._execution("/synthetic/example-repository"),
+            run_id="run-001",
+        )
+
+        report = render_markdown_report(record)
+
+        self.assertIn("## Human Decisions Required", report)
+        self.assertNotIn("Resolved by Human Decision", report)
+        self.assertIn("- Choose a decision threshold.", report)
+
+    def test_all_human_actions_render_resolved_director_questions(self) -> None:
+        record = create_run_record(
+            FEATURE,
+            self._execution("/synthetic/example-repository"),
+            run_id="run-001",
+        )
+        decisions = (
+            HumanDecision(
+                action=HumanAction.ACCEPT,
+                final_decision=DIRECTOR.decision,
+                timestamp=HUMAN_TIMESTAMP,
+            ),
+            HumanDecision(
+                action=HumanAction.REJECT,
+                final_decision=None,
+                timestamp=HUMAN_TIMESTAMP,
+            ),
+            HumanDecision(
+                action=HumanAction.MODIFY,
+                final_decision=DirectorDecision.GO,
+                timestamp=HUMAN_TIMESTAMP,
+            ),
+        )
+
+        for decision in decisions:
+            with self.subTest(action=decision.action.value):
+                resolved = record.model_copy(
+                    update={"human_decision": decision}
+                )
+                first = render_markdown_report(resolved)
+                second = render_markdown_report(resolved)
+
+                self.assertEqual(first, second)
+                self.assertIn(
+                    "## Director Questions — Resolved by Human Decision",
+                    first,
+                )
+                self.assertNotIn("## Human Decisions Required", first)
+                self.assertIn(
+                    "- Resolved: Choose a decision threshold.",
+                    first,
+                )
+                self.assertIn(f"- Status: {decision.action.value}", first)
+
     def test_run_record_retains_provenance_telemetry_and_ai_decision(self) -> None:
         execution = self._execution("/synthetic/example-repository")
 
@@ -260,6 +436,20 @@ class ReportingTests(unittest.TestCase):
             report = (run_directory / "report.md").read_text(encoding="utf-8")
             self.assertIn("- Status: modify", report)
             self.assertIn("- Final decision: GO", report)
+            self.assertIn(
+                "## Director Questions — Resolved by Human Decision",
+                report,
+            )
+            first_rewrite = {
+                "run.json": (run_directory / "run.json").read_bytes(),
+                "report.md": (run_directory / "report.md").read_bytes(),
+            }
+            update_run_with_human_decision(run_directory, decision)
+            second_rewrite = {
+                name: (run_directory / name).read_bytes()
+                for name in first_rewrite
+            }
+            self.assertEqual(second_rewrite, first_rewrite)
             unchanged_after = {
                 name: (run_directory / name).read_bytes()
                 for name in unchanged_before

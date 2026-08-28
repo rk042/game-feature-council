@@ -268,6 +268,14 @@ In that case:
 - effort confidence = low
 - explain the missing repository information in `basis`
 
+Use this `EffortRange` semantic contract:
+
+- `developer_days_min = null` and `developer_days_max = null` mean the
+  numeric estimate is unavailable; effort confidence must be low.
+- If no developer implementation work is required, use
+  `developer_days_min = 0` and `developer_days_max = 0`, with confidence
+  appropriate to the evidence.
+
 ## Evidence
 
 Do not invent repository evidence IDs.

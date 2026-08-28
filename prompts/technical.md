@@ -133,6 +133,14 @@ set:
 - explain why in `basis`
 - set effort confidence to low
 
+Use this `EffortRange` semantic contract:
+
+- `developer_days_min = null` and `developer_days_max = null` mean the
+  numeric estimate is unavailable; effort confidence must be low.
+- If no developer implementation work is required, use
+  `developer_days_min = 0` and `developer_days_max = 0`, with confidence
+  appropriate to the evidence.
+
 Example reasoning:
 
 Repository evidence was not supplied, so existing systems, reuse opportunities,
