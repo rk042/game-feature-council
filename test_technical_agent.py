@@ -1,8 +1,7 @@
 ﻿import asyncio
 
-from agents import Runner
-
 from council.agents import create_technical_agent
+from council.execution import execute_agent
 
 
 FEATURE = """
@@ -52,12 +51,12 @@ async def main():
 
     print("Running Technical Specialist...\n")
 
-    result = await Runner.run(
+    result = await execute_agent(
         agent,
         FEATURE,
     )
 
-    output = result.final_output
+    output = result.output
 
     print("=== TECHNICAL RESULT ===")
     print(output.model_dump_json(indent=2))
@@ -68,7 +67,7 @@ async def main():
     print(f"Confidence: {output.effort.confidence.value}")
     print(f"Basis: {output.effort.basis}")
 
-    usage = result.context_wrapper.usage
+    usage = result.usage
 
     print("\n=== USAGE ===")
     print(f"Requests: {usage.requests}")

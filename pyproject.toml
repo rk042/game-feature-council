@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=75,<81"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "game-feature-council"
+version = "0.1.0"
+description = "Repository-grounded game feature evaluation CLI"
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "openai-agents==0.22.0",
+    "pydantic==2.13.4",
+]
+
+[tool.setuptools.packages.find]
+include = ["council*"]

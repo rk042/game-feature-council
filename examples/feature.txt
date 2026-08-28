@@ -1,0 +1,32 @@
+Feature: Shared milestone challenge
+
+Player / product problem:
+Players who enjoy short sessions have few visible reasons to coordinate around
+a common goal, so cooperative intent is difficult to observe or validate.
+
+Feature idea:
+For a limited prototype window, show an optional shared milestone that advances
+when eligible players complete an existing progression action. Present current
+progress and a completion message using existing interface and reward patterns.
+
+Product goal:
+Learn whether a visible shared objective produces more meaningful participation
+and return behavior than the current experience.
+
+Constraints:
+- Reuse existing progression, persistence, eligibility, and reward capabilities
+  only where repository evidence confirms they exist.
+- Use an existing low-impact reward; do not introduce a currency or purchase.
+- Keep the prototype reversible and avoid removing anything already earned.
+- Treat analytics, experiment assignment, and backend authority as unknown until
+  repository evidence establishes them.
+
+Open questions:
+- Which existing progression action is the safest participation gate?
+- Which existing reward is conservative enough for an initial test?
+- Can assignment, persistence, eligibility, and measurement be trusted?
+- What participation and return thresholds would justify scaling or iteration?
+
+Numeric thresholds:
+No decision thresholds are supplied. Propose the smallest credible experiment
+and identify which thresholds require a human Product/Director decision.

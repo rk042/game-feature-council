@@ -1,8 +1,7 @@
 ﻿import asyncio
 
-from agents import Runner
-
 from council.agents import create_analytics_agent
+from council.execution import execute_agent
 
 
 FEATURE = """
@@ -55,12 +54,12 @@ async def main():
 
     print("Running Analytics / Experiment Specialist...\n")
 
-    result = await Runner.run(
+    result = await execute_agent(
         agent,
         FEATURE,
     )
 
-    output = result.final_output
+    output = result.output
 
     print("=== ANALYTICS RESULT ===")
     print(output.model_dump_json(indent=2))
@@ -81,7 +80,7 @@ async def main():
     for note in output.experiment.decision_threshold_notes:
         print(f"- {note}")
 
-    usage = result.context_wrapper.usage
+    usage = result.usage
 
     print("\n=== USAGE ===")
     print(f"Requests: {usage.requests}")

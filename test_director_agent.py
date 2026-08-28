@@ -1,8 +1,7 @@
 import asyncio
 
-from agents import Runner
-
 from council.agents import create_director_agent
+from council.execution import execute_agent
 from council.models import (
     Confidence,
     EffortRange,
@@ -216,12 +215,12 @@ async def main():
 
     director_input = build_director_input()
 
-    result = await Runner.run(
+    result = await execute_agent(
         agent,
         director_input,
     )
 
-    output = result.final_output
+    output = result.output
 
     print("=== DIRECTOR RESULT ===")
     print(output.model_dump_json(indent=2))
@@ -266,7 +265,7 @@ async def main():
     print("\n=== HUMAN APPROVAL REQUIRED ===")
     print(output.human_approval_required)
 
-    usage = result.context_wrapper.usage
+    usage = result.usage
 
     print("\n=== USAGE ===")
     print(f"Requests: {usage.requests}")

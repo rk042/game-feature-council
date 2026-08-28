@@ -1,8 +1,7 @@
 ﻿import asyncio
 
-from agents import Runner
-
 from council.agents import create_game_design_agent
+from council.execution import execute_agent
 
 
 FEATURE = """
@@ -30,17 +29,17 @@ async def main():
 
     print("Running Game Design Specialist...\n")
 
-    result = await Runner.run(
+    result = await execute_agent(
         agent,
         FEATURE,
     )
 
-    output = result.final_output
+    output = result.output
 
     print("=== STRUCTURED RESULT ===")
     print(output.model_dump_json(indent=2))
 
-    usage = result.context_wrapper.usage
+    usage = result.usage
 
     print("\n=== USAGE ===")
     print(f"Requests: {usage.requests}")

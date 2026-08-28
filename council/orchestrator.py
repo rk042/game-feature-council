@@ -1,12 +1,11 @@
 import asyncio
 import json
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from time import perf_counter
 from typing import TypeVar, cast
 
-from agents import Agent, Runner
+from agents import Agent
 from pydantic import BaseModel
 
 from council.agents import (
@@ -17,6 +16,7 @@ from council.agents import (
     create_scope_risk_agent,
     create_technical_agent,
 )
+from council.execution import AgentCallResult, execute_agent
 from council.context import (
     ContextBuilderError,
     validate_repository_evidence_ids,
@@ -40,10 +40,7 @@ from council.models import (
 )
 
 
-@dataclass(frozen=True)
-class AgentCallResult:
-    output: BaseModel
-    usage: TokenUsage
+_execute_agent = execute_agent
 
 
 AgentExecutor = Callable[
@@ -416,20 +413,6 @@ async def _run_specialists(
             "analytics": analytics_telemetry,
             "scope_risk": scope_risk_telemetry,
         },
-    )
-
-
-async def _execute_agent(agent: Agent, input_text: str) -> AgentCallResult:
-    result = await Runner.run(agent, input_text)
-    sdk_usage = result.context_wrapper.usage
-    return AgentCallResult(
-        output=result.final_output,
-        usage=TokenUsage(
-            requests=sdk_usage.requests,
-            input_tokens=sdk_usage.input_tokens,
-            output_tokens=sdk_usage.output_tokens,
-            total_tokens=sdk_usage.total_tokens,
-        ),
     )
 
 

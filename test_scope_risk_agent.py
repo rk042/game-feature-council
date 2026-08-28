@@ -1,8 +1,7 @@
 ﻿import asyncio
 
-from agents import Runner
-
 from council.agents import create_scope_risk_agent
+from council.execution import execute_agent
 
 
 FEATURE = """
@@ -59,12 +58,12 @@ async def main():
 
     print("Running Scope / Risk Specialist...\n")
 
-    result = await Runner.run(
+    result = await execute_agent(
         agent,
         FEATURE,
     )
 
-    output = result.final_output
+    output = result.output
 
     print("=== SCOPE / RISK RESULT ===")
     print(output.model_dump_json(indent=2))
@@ -83,7 +82,7 @@ async def main():
     for item in output.cheaper_test_options:
         print(f"- {item}")
 
-    usage = result.context_wrapper.usage
+    usage = result.usage
 
     print("\n=== USAGE ===")
     print(f"Requests: {usage.requests}")

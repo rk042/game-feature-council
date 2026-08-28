@@ -1,8 +1,7 @@
 import asyncio
 
-from agents import Runner
-
 from council.agents import create_producer_agent
+from council.execution import execute_agent
 from council.models import (
     AnalyticsResult,
     Confidence,
@@ -355,12 +354,12 @@ async def main():
 
     producer_input = build_producer_input()
 
-    result = await Runner.run(
+    result = await execute_agent(
         agent,
         producer_input,
     )
 
-    output = result.final_output
+    output = result.output
 
     print("=== PRODUCER RESULT ===")
     print(output.model_dump_json(indent=2))
@@ -386,7 +385,7 @@ async def main():
     for item in output.human_decisions_required:
         print(f"- {item}")
 
-    usage = result.context_wrapper.usage
+    usage = result.usage
 
     print("\n=== USAGE ===")
     print(f"Requests: {usage.requests}")
