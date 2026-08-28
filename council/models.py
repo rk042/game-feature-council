@@ -232,3 +232,13 @@ class DirectorResult(BaseModel):
     decision_conditions: DecisionConditions
 
     human_approval_required: Literal[True] = True
+
+
+class CouncilResult(BaseModel):
+    context: ContextBundle
+    game_design: GameDesignResult
+    technical: TechnicalResult
+    analytics: AnalyticsResult
+    scope_risk: ScopeRiskResult
+    producer: ProducerResult
+    director: DirectorResult
