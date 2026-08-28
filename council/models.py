@@ -27,6 +27,43 @@ class EvidenceItem(BaseModel):
     supports: list[str] = Field(default_factory=list)
 
 
+class ContextBuilderConfig(BaseModel):
+    max_search_terms: int = Field(default=12, gt=0)
+    max_selected_files: int = Field(default=10, gt=0)
+    max_characters_per_file: int = Field(default=8_000, gt=0)
+    max_total_characters: int = Field(default=50_000, gt=0)
+
+
+class RepositoryEvidence(BaseModel):
+    id: str
+    file_path: str
+    selection_reasons: list[str]
+    matched_terms: list[str] = Field(default_factory=list)
+    text: str
+    truncated: bool
+
+
+class ContextBundle(BaseModel):
+    repository_path: str
+    commit_sha: str
+    branch: str | None
+    working_tree_dirty: bool
+
+    feature_input: str
+    search_terms: list[str]
+    configuration: ContextBuilderConfig
+
+    tracked_file_count: int
+    candidate_file_count: int
+    selected_file_count: int
+    skipped_file_count: int
+    total_text_characters: int
+    truncated_file_count: int
+    selection_limited: bool
+
+    evidence: list[RepositoryEvidence]
+
+
 class Finding(BaseModel):
     statement: str
     evidence_ids: list[str] = Field(default_factory=list)
