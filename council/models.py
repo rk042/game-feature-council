@@ -322,6 +322,89 @@ class RunRecord(BaseModel):
     human_decision: HumanDecision | None = None
 
 
+class ContextEvidenceIdentity(BaseModel):
+    id: str
+    file_path: str
+    truncated: bool
+
+
+class EvaluationContextIdentity(BaseModel):
+    repository_path: str
+    commit_sha: str
+    branch: str | None
+    working_tree_dirty: bool
+    evidence_manifest: list[ContextEvidenceIdentity]
+    context_sha256: str
+
+
+class GeneralistExecution(BaseModel):
+    feature_sha256: str
+    context_identity: EvaluationContextIdentity
+    result: DirectorResult
+    telemetry: RoleTelemetry
+    estimated_cost_usd: Decimal | None
+    unpriced_models: list[str] = Field(default_factory=list)
+    pricing_snapshot_id: str
+
+
+class ComparisonPathMetrics(BaseModel):
+    duration_ms: float = Field(ge=0)
+    input_tokens: int = Field(ge=0)
+    output_tokens: int = Field(ge=0)
+    total_tokens: int = Field(ge=0)
+    estimated_cost_usd: Decimal | None
+    decision: DirectorDecision
+    confidence: Confidence
+
+
+class ComparisonPreference(str, Enum):
+    GENERALIST = "generalist"
+    COUNCIL = "council"
+    TIE = "tie"
+
+
+class ComparisonRubricScores(BaseModel):
+    grounding: int = Field(ge=1, le=5, strict=True)
+    scope_reduction: int = Field(ge=1, le=5, strict=True)
+    hypothesis_quality: int = Field(ge=1, le=5, strict=True)
+    experiment_credibility: int = Field(ge=1, le=5, strict=True)
+    measurement_to_learning_logic: int = Field(ge=1, le=5, strict=True)
+    technical_realism: int = Field(ge=1, le=5, strict=True)
+    decision_usefulness: int = Field(ge=1, le=5, strict=True)
+    conciseness: int = Field(ge=1, le=5, strict=True)
+
+
+class InsightComparison(BaseModel):
+    issue: str
+    generalist_observation: str
+    council_observation: str
+    assessment: str
+
+
+class HumanComparisonReview(BaseModel):
+    generalist_scores: ComparisonRubricScores
+    council_scores: ComparisonRubricScores
+    preference: ComparisonPreference
+    reason: str = Field(min_length=1)
+    insights: list[InsightComparison] = Field(default_factory=list)
+    timestamp: datetime
+
+    @field_validator("timestamp")
+    @classmethod
+    def normalize_timestamp(cls, value: datetime) -> datetime:
+        return _as_utc(value)
+
+
+class ComparisonRecord(BaseModel):
+    council_run_id: str
+    feature_sha256: str
+    context_identity: EvaluationContextIdentity
+    generalist: GeneralistExecution
+    council_metrics: ComparisonPathMetrics
+    generalist_metrics: ComparisonPathMetrics
+    human_review: HumanComparisonReview | None = None
+
+
 def _as_utc(value: datetime) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("timestamp must be timezone-aware")

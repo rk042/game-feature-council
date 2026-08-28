@@ -80,3 +80,14 @@ def create_director_agent() -> Agent:
         model=model,
         output_type=DirectorResult,
     )
+
+
+def create_generalist_agent() -> Agent:
+    model = os.environ["COUNCIL_SYNTHESIS_MODEL"]
+
+    return Agent(
+        name="Generalist Baseline",
+        instructions=load_prompt("generalist.md"),
+        model=model,
+        output_type=DirectorResult,
+    )

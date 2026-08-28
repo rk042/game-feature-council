@@ -6,10 +6,12 @@ from pathlib import Path
 from uuid import uuid4
 
 from council.models import (
+    ComparisonRecord,
     CouncilExecution,
     DirectorDecision,
     DirectorResult,
     HumanAction,
+    HumanComparisonReview,
     HumanDecision,
     RunRecord,
 )
@@ -34,6 +36,10 @@ EXPECTED_ARTIFACT_FILES = frozenset(
         "report.md",
     }
 )
+EXPECTED_EVALUATION_ARTIFACT_FILES = EXPECTED_ARTIFACT_FILES | {
+    "generalist.json",
+    "comparison.json",
+}
 _SAFE_RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 _ROLE_ORDER = (
     "game_design",
@@ -197,42 +203,93 @@ def update_run_with_human_decision(
     human_decision: HumanDecision,
 ) -> RunRecord:
     directory = Path(run_directory).expanduser().resolve()
-    run_path = directory / "run.json"
-    if not directory.is_dir() or not run_path.is_file():
-        raise RunArtifactError(f"Not a council run directory: {directory}")
-
-    try:
-        record = RunRecord.model_validate_json(
-            run_path.read_text(encoding="utf-8")
-        )
-    except (OSError, ValueError) as error:
-        raise RunArtifactError(
-            f"Unable to read run record from: {run_path}"
-        ) from error
-
-    if directory.name != record.run_id:
-        raise RunArtifactError(
-            "Run directory name does not match the persisted run ID."
-        )
-    target_repository = Path(record.repository_path).expanduser().resolve()
-    if _is_within(directory, target_repository):
-        raise RunArtifactError(
-            "Run artifacts cannot be updated inside the target repository."
-        )
+    record = _read_run_record(directory)
     _validate_human_decision(human_decision, record.ai_recommendation)
 
     updated_record = record.model_copy(
         update={"human_decision": human_decision}
     )
-    _write_json(run_path, updated_record.model_dump(mode="json"))
+    _write_json(directory / "run.json", updated_record.model_dump(mode="json"))
     (directory / "report.md").write_text(
-        render_markdown_report(updated_record),
+        render_markdown_report(
+            updated_record,
+            _read_optional_comparison(directory),
+        ),
         encoding="utf-8",
     )
     return updated_record
 
 
-def render_markdown_report(record: RunRecord) -> str:
+def write_evaluation_artifacts(
+    run_directory: str | Path,
+    comparison: ComparisonRecord,
+) -> None:
+    directory = Path(run_directory).expanduser().resolve()
+    record = _read_run_record(directory)
+    if comparison.council_run_id != record.run_id:
+        raise RunArtifactError(
+            "Comparison record does not belong to this council run."
+        )
+
+    generalist_path = directory / "generalist.json"
+    comparison_path = directory / "comparison.json"
+    if generalist_path.exists() or comparison_path.exists():
+        raise RunArtifactError(
+            "Evaluation artifacts already exist for this council run."
+        )
+
+    _write_json(
+        generalist_path,
+        comparison.generalist.model_dump(mode="json"),
+    )
+    _write_json(
+        comparison_path,
+        comparison.model_dump(mode="json"),
+    )
+    (directory / "report.md").write_text(
+        render_markdown_report(record, comparison),
+        encoding="utf-8",
+    )
+
+
+def update_comparison_with_human_review(
+    run_directory: str | Path,
+    human_review: HumanComparisonReview,
+) -> ComparisonRecord:
+    directory = Path(run_directory).expanduser().resolve()
+    record = _read_run_record(directory)
+    comparison_path = directory / "comparison.json"
+    if not comparison_path.is_file():
+        raise RunArtifactError(
+            f"Comparison artifact does not exist: {comparison_path}"
+        )
+
+    try:
+        comparison = ComparisonRecord.model_validate_json(
+            comparison_path.read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError) as error:
+        raise RunArtifactError(
+            f"Unable to read comparison record from: {comparison_path}"
+        ) from error
+    if comparison.council_run_id != record.run_id:
+        raise RunArtifactError(
+            "Comparison record does not belong to this council run."
+        )
+
+    updated = comparison.model_copy(update={"human_review": human_review})
+    _write_json(comparison_path, updated.model_dump(mode="json"))
+    (directory / "report.md").write_text(
+        render_markdown_report(record, updated),
+        encoding="utf-8",
+    )
+    return updated
+
+
+def render_markdown_report(
+    record: RunRecord,
+    comparison: ComparisonRecord | None = None,
+) -> str:
     result = record.council_result
     director = result.director
     producer = result.producer
@@ -339,6 +396,7 @@ def render_markdown_report(record: RunRecord) -> str:
         "",
         *_runtime_role_lines(record),
         "",
+        *_comparison_report_lines(comparison),
         "## Human Decision",
         "",
         *_human_decision_lines(record),
@@ -470,6 +528,110 @@ def _human_decision_lines(record: RunRecord) -> list[str]:
         f"- Note: {decision.note or 'None'}",
         f"- Timestamp: {decision.timestamp.isoformat()}",
     ]
+
+
+def _read_run_record(directory: Path) -> RunRecord:
+    run_path = directory / "run.json"
+    if not directory.is_dir() or not run_path.is_file():
+        raise RunArtifactError(f"Not a council run directory: {directory}")
+
+    try:
+        record = RunRecord.model_validate_json(
+            run_path.read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError) as error:
+        raise RunArtifactError(
+            f"Unable to read run record from: {run_path}"
+        ) from error
+    if directory.name != record.run_id:
+        raise RunArtifactError(
+            "Run directory name does not match the persisted run ID."
+        )
+
+    target_repository = Path(record.repository_path).expanduser().resolve()
+    if _is_within(directory, target_repository):
+        raise RunArtifactError(
+            "Run artifacts cannot be updated inside the target repository."
+        )
+    return record
+
+
+def _read_optional_comparison(directory: Path) -> ComparisonRecord | None:
+    comparison_path = directory / "comparison.json"
+    if not comparison_path.is_file():
+        return None
+    try:
+        return ComparisonRecord.model_validate_json(
+            comparison_path.read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError) as error:
+        raise RunArtifactError(
+            f"Unable to read comparison record from: {comparison_path}"
+        ) from error
+
+
+def _comparison_report_lines(
+    comparison: ComparisonRecord | None,
+) -> list[str]:
+    if comparison is None:
+        return []
+
+    generalist = comparison.generalist_metrics
+    council = comparison.council_metrics
+    lines = [
+        "## Generalist Baseline Comparison",
+        "",
+        "| Metric | Generalist | Council |",
+        "| --- | ---: | ---: |",
+        f"| Duration (ms) | {generalist.duration_ms:.3f} | {council.duration_ms:.3f} |",
+        f"| Input tokens | {generalist.input_tokens} | {council.input_tokens} |",
+        f"| Output tokens | {generalist.output_tokens} | {council.output_tokens} |",
+        f"| Total tokens | {generalist.total_tokens} | {council.total_tokens} |",
+        f"| Estimated cost USD | {_comparison_cost(generalist.estimated_cost_usd)} | {_comparison_cost(council.estimated_cost_usd)} |",
+        f"| Decision | {generalist.decision.value} | {council.decision.value} |",
+        f"| Confidence | {generalist.confidence.value} | {council.confidence.value} |",
+        "",
+    ]
+    review = comparison.human_review
+    if review is None:
+        lines.extend(["- Human comparison review: Pending", ""])
+        return lines
+
+    lines.extend(
+        [
+            f"- Human preference: **{review.preference.value}**",
+            f"- Reason: {review.reason}",
+            "",
+            "### Human Rubric",
+            "",
+            "| Dimension | Generalist | Council |",
+            "| --- | ---: | ---: |",
+        ]
+    )
+    for dimension in type(review.generalist_scores).model_fields:
+        label = dimension.replace("_", " ").title()
+        lines.append(
+            f"| {label} | "
+            f"{getattr(review.generalist_scores, dimension)} | "
+            f"{getattr(review.council_scores, dimension)} |"
+        )
+    if review.insights:
+        lines.extend(["", "### Human Insight Comparisons", ""])
+        for insight in review.insights:
+            lines.extend(
+                [
+                    f"- **{insight.issue}**",
+                    f"  - Generalist: {insight.generalist_observation}",
+                    f"  - Council: {insight.council_observation}",
+                    f"  - Assessment: {insight.assessment}",
+                ]
+            )
+    lines.append("")
+    return lines
+
+
+def _comparison_cost(value: object) -> str:
+    return "Unavailable" if value is None else str(value)
 
 
 def _utc_now() -> datetime:
