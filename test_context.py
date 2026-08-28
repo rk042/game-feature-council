@@ -68,8 +68,62 @@ class ContextBuilderTests(unittest.TestCase):
 
         self.assertEqual(
             derive_search_terms(feature_input, max_terms=4),
-            ["repeat", "engagement", "experiment", "ui"],
+            ["repeat", "engagement", "experiment", "reward"],
         )
+
+    def test_structured_brief_labels_do_not_starve_later_terms(self) -> None:
+        feature_input = """Feature Name: Weekly concept
+Player Product Problem: Players need a reason to return.
+Feature Idea: Early description.
+
+Implementation Questions:
+Progression eligibility persistence analytics economy.
+Progression eligibility persistence analytics economy participation.
+"""
+
+        terms = derive_search_terms(feature_input)
+
+        for label in ("feature", "name", "product", "problem", "players"):
+            self.assertNotIn(label, terms)
+        for meaningful_term in (
+            "progression",
+            "eligibility",
+            "persistence",
+            "analytics",
+            "economy",
+            "participation",
+        ):
+            self.assertIn(meaningful_term, terms)
+        self.assertLessEqual(len(terms), 12)
+
+    def test_simple_singular_plural_variants_share_one_term(self) -> None:
+        terms = derive_search_terms(
+            "reward rewards opportunity opportunities "
+            "system systems event events",
+        )
+
+        self.assertCountEqual(
+            terms,
+            ["reward", "opportunity", "system", "event"],
+        )
+        self.assertEqual(len(terms), 4)
+
+    def test_normalized_term_searches_known_plural_forms(self) -> None:
+        self._write(
+            "src/OpportunityService.py",
+            "future opportunities remain available\n",
+        )
+        self._commit_all("add plural-only implementation wording")
+
+        context = build_context(self.repository, "opportunities")
+
+        selected = next(
+            item
+            for item in context.evidence
+            if item.file_path == "src/OpportunityService.py"
+        )
+        self.assertEqual(context.search_terms, ["opportunity"])
+        self.assertEqual(selected.matched_terms, ["opportunity"])
 
     def test_detached_head_has_no_branch(self) -> None:
         self._git("checkout", "--detach")
@@ -85,7 +139,12 @@ class ContextBuilderTests(unittest.TestCase):
 
         first_paths = [item.file_path for item in first.evidence]
         second_paths = [item.file_path for item in second.evidence]
+        self.assertEqual(first.search_terms, second.search_terms)
         self.assertEqual(first_paths, second_paths)
+        self.assertEqual(
+            [item.id for item in first.evidence],
+            [item.id for item in second.evidence],
+        )
         self.assertIn("src/FeatureService.py", first_paths)
         selected = next(
             item
@@ -112,6 +171,86 @@ class ContextBuilderTests(unittest.TestCase):
 
         self.assertIn("AGENTS.md", [item.file_path for item in context.evidence])
         self.assertEqual(context.evidence[0].file_path, "AGENTS.md")
+        self.assertIn(
+            "reserved core context",
+            context.evidence[0].selection_reasons,
+        )
+
+    def test_meta_files_do_not_outrank_relevant_text_files(self) -> None:
+        self._write(
+            "Assets/EligibilityService.cs.meta",
+            "reward eligibility reward eligibility name name\n",
+        )
+        self._write(
+            "src/EligibilityService.py",
+            "reward eligibility implementation\n",
+        )
+        self._commit_all("add metadata noise and implementation")
+        configuration = ContextBuilderConfig(max_selected_files=3)
+
+        context = build_context(
+            self.repository,
+            "reward eligibility",
+            configuration,
+        )
+        selected_paths = [item.file_path for item in context.evidence]
+
+        self.assertIn("src/EligibilityService.py", selected_paths)
+        self.assertNotIn("Assets/EligibilityService.cs.meta", selected_paths)
+
+    def test_root_readme_is_reserved_without_nested_readme_boilerplate(self) -> None:
+        self._write(
+            "docs/Readme/Scripts/ReadmeEditor.py",
+            "Feature Name Product Problem Players Need\n",
+        )
+        self._write("src/Progression.py", "progression eligibility\n")
+        self._write("config/Eligibility.yaml", "progression: eligibility\n")
+        self._commit_all("add nested readme boilerplate")
+        configuration = ContextBuilderConfig(max_selected_files=4)
+
+        context = build_context(
+            self.repository,
+            "Feature Name: progression eligibility",
+            configuration,
+        )
+        selected_paths = [item.file_path for item in context.evidence]
+
+        self.assertIn("README.md", selected_paths)
+        root_readme = next(
+            item for item in context.evidence if item.file_path == "README.md"
+        )
+        self.assertIn("reserved core context", root_readme.selection_reasons)
+        self.assertNotIn(
+            "docs/Readme/Scripts/ReadmeEditor.py",
+            selected_paths,
+        )
+
+    def test_strong_implementation_matches_survive_bounded_selection(self) -> None:
+        for index in range(8):
+            self._write(
+                f"docs/Note{index:02d}.md",
+                "reward overview\n",
+            )
+        self._write(
+            "src/ProgressionEligibility.py",
+            "reward eligibility progression\n",
+        )
+        self._write(
+            "config/Participation.yaml",
+            "reward: eligibility\nprogression: enabled\n",
+        )
+        self._commit_all("add crowded implementation evidence")
+        configuration = ContextBuilderConfig(max_selected_files=3)
+
+        context = build_context(
+            self.repository,
+            "reward eligibility progression",
+            configuration,
+        )
+        selected_paths = [item.file_path for item in context.evidence]
+
+        self.assertIn("src/ProgressionEligibility.py", selected_paths)
+        self.assertIn("config/Participation.yaml", selected_paths)
 
     def test_per_file_text_is_truncated(self) -> None:
         self._write("src/LargeSource.py", "unique needle " + ("x" * 100))

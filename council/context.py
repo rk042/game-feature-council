@@ -1,7 +1,7 @@
 import os
 import re
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import Iterable
 
@@ -19,34 +19,112 @@ _TOKEN_PATTERN = re.compile(r"[A-Za-z0-9]+")
 _STOP_WORDS = frozenset(
     {
         "a",
+        "already",
         "an",
         "and",
+        "any",
         "are",
         "as",
         "at",
         "be",
+        "can",
+        "cannot",
         "by",
+        "could",
+        "do",
+        "does",
         "for",
         "from",
         "has",
         "have",
+        "how",
         "if",
         "in",
         "is",
         "it",
+        "may",
+        "meaningful",
+        "might",
+        "more",
+        "must",
+        "no",
+        "not",
         "of",
         "on",
+        "only",
         "or",
+        "should",
         "that",
         "the",
+        "their",
+        "them",
+        "then",
+        "they",
         "this",
+        "through",
         "to",
         "was",
         "were",
+        "what",
+        "when",
+        "where",
+        "whether",
+        "which",
+        "who",
+        "why",
         "will",
         "with",
+        "without",
+        "would",
     }
 )
+_FEATURE_BRIEF_STOP_WORDS = frozenset(
+    {
+        "constraint",
+        "constraints",
+        "decision",
+        "design",
+        "feature",
+        "goal",
+        "goals",
+        "idea",
+        "important",
+        "name",
+        "need",
+        "needs",
+        "open",
+        "player",
+        "players",
+        "problem",
+        "product",
+        "question",
+        "questions",
+        "threshold",
+        "thresholds",
+    }
+)
+_TERM_VARIANTS = {
+    "events": "event",
+    "goals": "goal",
+    "needs": "need",
+    "opportunities": "opportunity",
+    "players": "player",
+    "questions": "question",
+    "rewards": "reward",
+    "systems": "system",
+    "thresholds": "threshold",
+}
+_TERM_SEARCH_FORMS = {
+    "event": ("event", "events"),
+    "goal": ("goal", "goals"),
+    "need": ("need", "needs"),
+    "opportunity": ("opportunity", "opportunities"),
+    "player": ("player", "players"),
+    "question": ("question", "questions"),
+    "reward": ("reward", "rewards"),
+    "system": ("system", "systems"),
+    "threshold": ("threshold", "thresholds"),
+}
 _MANIFEST_NAMES = frozenset(
     {
         "cargo.toml",
@@ -130,20 +208,45 @@ def derive_search_terms(
     feature_input: str,
     max_terms: int = DEFAULT_CONFIG.max_search_terms,
 ) -> list[str]:
-    terms: list[str] = []
-    seen: set[str] = set()
+    term_stats: dict[str, tuple[int, set[int], int]] = {}
+    section_index = 0
+    token_index = 0
 
-    for match in _TOKEN_PATTERN.finditer(feature_input):
-        term = match.group(0).casefold()
-        if term in _STOP_WORDS or len(term) < 2 or term in seen:
+    for line in feature_input.splitlines():
+        if not line.strip():
+            section_index += 1
             continue
 
-        seen.add(term)
-        terms.append(term)
-        if len(terms) == max_terms:
-            break
+        for match in _TOKEN_PATTERN.finditer(line):
+            raw_term = match.group(0).casefold()
+            term = _TERM_VARIANTS.get(raw_term, raw_term)
+            if (
+                term in _STOP_WORDS
+                or term in _FEATURE_BRIEF_STOP_WORDS
+                or len(term) < 2
+            ):
+                token_index += 1
+                continue
 
-    return terms
+            count, sections, first_appearance = term_stats.get(
+                term,
+                (0, set(), token_index),
+            )
+            sections.add(section_index)
+            term_stats[term] = (count + 1, sections, first_appearance)
+            token_index += 1
+
+    ranked_terms = sorted(
+        term_stats,
+        key=lambda term: (
+            -term_stats[term][0],
+            -len(term_stats[term][1]),
+            -len(term),
+            term_stats[term][2],
+            term,
+        ),
+    )
+    return ranked_terms[:max_terms]
 
 
 def build_context(
@@ -366,16 +469,13 @@ def _search_feature_terms(
     matches: dict[str, set[str]] = {}
 
     for term in search_terms:
+        arguments = ["grep", "-l", "-i", "-F", "-z"]
+        for search_form in _TERM_SEARCH_FORMS.get(term, (term,)):
+            arguments.extend(("-e", search_form))
+        arguments.append("--")
         output = _run_git(
             repository,
-            "grep",
-            "-l",
-            "-i",
-            "-F",
-            "-z",
-            "-e",
-            term,
-            "--",
+            *arguments,
             allowed_return_codes=(0, 1),
         )
         for file_path in (path for path in output.split("\0") if path):
@@ -393,6 +493,9 @@ def _rank_candidates(
     candidates: list[_RankedCandidate] = []
 
     for file_path in tracked_files:
+        if PurePosixPath(file_path).suffix.casefold() == ".meta":
+            continue
+
         reasons, score = _categorise_file(file_path)
         matched_terms = tuple(
             sorted(matches.get(file_path, set()), key=term_order.__getitem__)
@@ -442,8 +545,18 @@ def _preserve_core_context(
             candidate.file_path,
         ),
     )[:core_file_limit]
+    explained_core_candidates = [
+        replace(
+            candidate,
+            selection_reasons=(
+                "reserved core context",
+                *candidate.selection_reasons,
+            ),
+        )
+        for candidate in core_candidates
+    ]
     core_paths = {candidate.file_path for candidate in core_candidates}
-    return core_candidates + [
+    return explained_core_candidates + [
         candidate
         for candidate in candidates
         if candidate.file_path not in core_paths
@@ -480,7 +593,8 @@ def _categorise_file(file_path: str) -> tuple[list[str], int]:
     reasons: list[str] = []
     score = 0
 
-    is_readme = name.startswith("readme")
+    is_root_file = len(path.parts) == 1
+    is_readme = is_root_file and name.startswith("readme")
     is_agents = name == "agents.md"
     is_instruction = (
         is_agents
@@ -495,7 +609,7 @@ def _categorise_file(file_path: str) -> tuple[list[str], int]:
     if is_instruction:
         reasons.append("project instruction candidate")
         score += 800
-    if len(path.parts) == 1 and (is_readme or is_agents or is_manifest):
+    if is_root_file and (is_readme or is_agents or is_manifest):
         reasons.append("repository metadata candidate")
         score += 600
 
