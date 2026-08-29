@@ -1,6 +1,9 @@
 import asyncio
+import json
 import math
 import os
+import subprocess
+import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -28,6 +31,8 @@ from council.models import (
     TokenUsage,
 )
 from council.pricing import DEFAULT_PRICING_SNAPSHOT, estimate_cost
+from council.presentation import ExecutionProgress
+from council.progress import ProgressListener
 from council.reporting import (
     ReviewArtifacts,
     RunArtifactError,
@@ -60,14 +65,19 @@ OUTPUT_TOKEN_ALLOWANCES = {
 CHARS_PER_TOKEN = 4
 CONSERVATIVE_TOKEN_MULTIPLIER = 2
 REDACTION_MARKER = "[REDACTED]"
+RECENT_REPOSITORY_LIMIT = 5
 
 
 app = typer.Typer(
     name="council",
     help="Evaluate game-feature experiments against a Git repository.",
-    no_args_is_help=True,
+    no_args_is_help=False,
     add_completion=False,
+    invoke_without_command=True,
 )
+
+config_app = typer.Typer(help="Manage local CLI convenience settings.")
+app.add_typer(config_app, name="config")
 
 
 class RunMode(str, Enum):
@@ -110,12 +120,20 @@ class RunArguments:
     dry_run: bool
     yes: bool
     output_dir: str
+    verbose: bool = False
 
 
 @dataclass(frozen=True)
 class ReviewArguments:
     run: str
     output_dir: str
+
+
+@dataclass(frozen=True)
+class RunCompletion:
+    run_id: str
+    run_directory: Path
+    report_path: Path
 
 
 class TerminalOutput(Protocol):
@@ -225,6 +243,28 @@ class RichOutput:
     def success(self, text: str) -> None:
         self._console.print(f"[bold green]{text}[/bold green]")
 
+    @property
+    def console(self) -> Console:
+        return self._console
+
+
+@app.callback(invoke_without_command=True)
+def typer_root(ctx: typer.Context) -> None:
+    if ctx.invoked_subcommand is not None:
+        return
+    if not _is_interactive_terminal():
+        typer.echo("No command supplied. Use `council run --help`.", err=True)
+        raise typer.Exit(2)
+
+    output = RichOutput()
+    _exit_for_code(
+        _run_with_error_boundary(
+            "run",
+            lambda: _interactive_wizard(input_fn=input, output=output),
+            output,
+        )
+    )
+
 
 def _validate_cost_option(
     _context: typer.Context,
@@ -281,6 +321,11 @@ def typer_run_command(
         "--output-dir",
         help="Artifact root directory (default: runs).",
     ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        help="Show additional safe operational telemetry.",
+    ),
 ) -> None:
     output = RichOutput()
     output.heading("Game Feature Council")
@@ -293,16 +338,39 @@ def typer_run_command(
         dry_run=dry_run,
         yes=yes,
         output_dir=output_dir,
+        verbose=verbose,
     )
     _exit_for_code(
         _run_with_error_boundary(
             "run",
             lambda: asyncio.run(
-                _run_command(arguments, input_fn=input, output=output)
+                _run_command(
+                    arguments,
+                    input_fn=input,
+                    output=output,
+                    live_output=_is_live_terminal(output.console),
+                )
             ),
             output,
         )
     )
+
+
+@config_app.command("clear-recent")
+def typer_clear_recent_command() -> None:
+    output = RichOutput()
+    try:
+        cleared = clear_recent_repositories()
+    except OSError as error:
+        output.error(
+            "Unable to clear recent repositories: "
+            f"{_sanitize_configured_secret(str(error))}"
+        )
+        raise typer.Exit(2) from error
+    if cleared:
+        output.success("Recent repository history cleared.")
+    else:
+        output.line("Recent repository history is already empty.")
 
 
 @app.command("review")
@@ -369,6 +437,16 @@ def main(
     input_fn: Callable[[str], str] = input,
     print_fn: Callable[[str], None] = print,
 ) -> int:
+    if not argv:
+        output = PlainOutput(print_fn)
+        if not _is_interactive_terminal():
+            output.error("No command supplied. Use `council run --help`.")
+            return 2
+        return _run_with_error_boundary(
+            "run",
+            lambda: _interactive_wizard(input_fn=input_fn, output=output),
+            output,
+        )
     args = parse_args(argv)
     output = PlainOutput(print_fn)
     if args.command == "review":
@@ -394,6 +472,7 @@ def main(
                     dry_run=args.dry_run,
                     yes=args.yes,
                     output_dir=args.output_dir,
+                    verbose=args.verbose,
                 ),
                 input_fn=input_fn,
                 output=output,
@@ -411,10 +490,7 @@ def _run_with_error_boundary(
     try:
         return action()
     except CliError as error:
-        safe_message = sanitize_user_facing_text(
-            str(error),
-            (os.environ.get("OPENAI_API_KEY", ""),),
-        )
+        safe_message = _sanitize_configured_secret(str(error))
         output.error(safe_message)
         if error.before_api_calls:
             output.line("Execution stopped before any API calls.")
@@ -446,6 +522,13 @@ def sanitize_user_facing_text(
     return sanitized
 
 
+def _sanitize_configured_secret(text: str) -> str:
+    return sanitize_user_facing_text(
+        text,
+        (os.environ.get("OPENAI_API_KEY", ""),),
+    )
+
+
 def _is_missing_agents_dependency(error: ModuleNotFoundError) -> bool:
     missing_name = error.name or ""
     return missing_name == "agents" or missing_name.startswith("agents.")
@@ -457,22 +540,40 @@ def build_context(repository_path: str, feature: str) -> ContextBundle:
     return build(repository_path, feature)
 
 
+def validate_repository_path(repository_path: str) -> Path:
+    from council.context import validate_repository_path as validate
+
+    return validate(repository_path)
+
+
 async def run_council_with_telemetry(
     feature: str,
     context: ContextBundle,
+    *,
+    progress_listener: ProgressListener | None = None,
 ) -> CouncilExecution:
     from council.orchestrator import run_council_with_telemetry as run
 
-    return await run(feature, context)
+    return await run(
+        feature,
+        context,
+        progress_listener=progress_listener,
+    )
 
 
 async def run_generalist(
     feature: str,
     context: ContextBundle,
+    *,
+    progress_listener: ProgressListener | None = None,
 ) -> GeneralistExecution:
     from council.evaluation import run_generalist as run
 
-    return await run(feature, context)
+    return await run(
+        feature,
+        context,
+        progress_listener=progress_listener,
+    )
 
 
 def render_specialist_input(feature: str, context: ContextBundle) -> str:
@@ -485,6 +586,357 @@ def load_prompt(filename: str) -> str:
     from council.agents import load_prompt as load
 
     return load(filename)
+
+
+def _interactive_wizard(
+    *,
+    input_fn: Callable[[str], str],
+    output: TerminalOutput,
+) -> int:
+    output.heading("Game Feature Council")
+    repository = _prompt_for_repository(input_fn, output)
+    feature, feature_file = _prompt_for_feature(input_fn, output)
+    mode = _prompt_for_mode(input_fn, output)
+    maximum_cost = _prompt_for_maximum_cost(input_fn, output)
+
+    completions: list[RunCompletion] = []
+    code = asyncio.run(
+        _run_command(
+            RunArguments(
+                repo=repository,
+                feature=feature,
+                feature_file=feature_file,
+                mode=mode,
+                max_cost_usd=maximum_cost,
+                dry_run=False,
+                yes=False,
+                output_dir="runs",
+            ),
+            input_fn=input_fn,
+            output=output,
+            live_output=(
+                isinstance(output, RichOutput)
+                and _is_live_terminal(output.console)
+            ),
+            completion_callback=completions.append,
+        )
+    )
+    if code != 0 or not completions:
+        return code
+
+    completion = completions[0]
+    try:
+        remember_repository(repository)
+    except OSError as error:
+        output.warning(
+            "Run completed, but recent repository history could not be "
+            f"updated: {_sanitize_configured_secret(str(error))}"
+        )
+    try:
+        _prompt_for_post_run_action(
+            completion,
+            mode,
+            input_fn=input_fn,
+            output=output,
+        )
+    except KeyboardInterrupt:
+        output.line("Post-run action cancelled. The completed run is unchanged.")
+    except CliError as error:
+        output.error(_sanitize_configured_secret(str(error)))
+        output.line("The run completed, but the post-run action did not complete.")
+        return 2
+    return 0
+
+
+def _prompt_for_repository(
+    input_fn: Callable[[str], str],
+    output: TerminalOutput,
+) -> str:
+    from council.context import ContextBuilderError
+
+    recent = load_recent_repositories()
+    while True:
+        output.heading("Repository")
+        if recent:
+            for index, repository in enumerate(recent, start=1):
+                output.line(f"{index}. {repository}")
+            output.line(f"{len(recent) + 1}. Enter another path")
+            raw = _wizard_input(input_fn, "Selection or repository path: ")
+            stripped = raw.strip()
+            if stripped.isdigit():
+                selection = int(stripped)
+                if 1 <= selection <= len(recent):
+                    candidate = recent[selection - 1]
+                elif selection == len(recent) + 1:
+                    candidate = _wizard_input(input_fn, "Repository path: ")
+                else:
+                    output.error("Choose a listed repository or enter a path.")
+                    continue
+            else:
+                candidate = raw
+        else:
+            candidate = _wizard_input(input_fn, "Repository path: ")
+
+        normalized = _normalize_pasted_path(candidate)
+        if not normalized:
+            output.error("Repository path is required.")
+            continue
+        try:
+            repository = validate_repository_path(normalized)
+        except ContextBuilderError as error:
+            output.error(
+                _sanitize_configured_secret(str(error))
+            )
+            output.line("Enter a valid Git working-tree path and try again.")
+            continue
+        return str(repository)
+
+
+def _prompt_for_feature(
+    input_fn: Callable[[str], str],
+    output: TerminalOutput,
+) -> tuple[str | None, str | None]:
+    if _prompt_yes_no(input_fn, "Use a feature file instead? [y/N] "):
+        while True:
+            raw_path = _wizard_input(input_fn, "Feature file path: ")
+            path = _normalize_pasted_path(raw_path)
+            try:
+                feature = _read_feature_file(path)
+            except CliError as error:
+                output.error(_sanitize_configured_secret(str(error)))
+                continue
+            return feature, None
+
+    output.heading("Feature request")
+    output.line("Describe the feature. Press Enter on an empty line to finish.")
+    while True:
+        lines: list[str] = []
+        while True:
+            line = _wizard_input(input_fn, "> ")
+            if not line:
+                break
+            lines.append(line)
+        feature = "\n".join(lines)
+        if feature.strip():
+            return feature, None
+        output.error("Feature input is empty. Please enter a feature request.")
+
+
+def _prompt_for_mode(
+    input_fn: Callable[[str], str],
+    output: TerminalOutput,
+) -> str:
+    output.heading("Analysis mode")
+    output.line("1. Council + Generalist")
+    output.line("2. Council only")
+    output.line("3. Generalist only")
+    modes = {
+        "": MODE_BOTH,
+        "1": MODE_BOTH,
+        "2": MODE_COUNCIL,
+        "3": MODE_GENERALIST,
+    }
+    while True:
+        choice = _wizard_input(input_fn, "Selection [1]: ").strip()
+        if choice in modes:
+            return modes[choice]
+        output.error("Choose 1, 2, or 3.")
+
+
+def _prompt_for_maximum_cost(
+    input_fn: Callable[[str], str],
+    output: TerminalOutput,
+) -> Decimal | None:
+    while True:
+        raw = _wizard_input(
+            input_fn,
+            "Maximum API cost USD (leave blank for no cap): ",
+        ).strip()
+        if not raw:
+            return None
+        try:
+            value = Decimal(raw)
+        except InvalidOperation:
+            output.error("Enter a non-negative decimal value or leave blank.")
+            continue
+        if not value.is_finite() or value < 0:
+            output.error("Enter a non-negative decimal value or leave blank.")
+            continue
+        return value
+
+
+def _prompt_for_post_run_action(
+    completion: RunCompletion,
+    mode: str,
+    *,
+    input_fn: Callable[[str], str],
+    output: TerminalOutput,
+) -> None:
+    while True:
+        output.heading("What next?")
+        output.line("1. Review decision")
+        output.line("2. Open report")
+        output.line("3. Exit")
+        choice = _wizard_input(input_fn, "Selection [3]: ").strip() or "3"
+        if choice == "1":
+            if mode == MODE_GENERALIST:
+                output.line("Human review is not available for Generalist-only runs.")
+                continue
+            _review_command(
+                ReviewArguments(
+                    run=completion.run_id,
+                    output_dir=str(completion.run_directory.parent),
+                ),
+                input_fn=input_fn,
+                print_fn=output.line,
+            )
+            return
+        if choice == "2":
+            try:
+                open_report(completion.report_path)
+            except (OSError, RuntimeError) as error:
+                output.warning(
+                    "Unable to open the report: "
+                    f"{_sanitize_configured_secret(str(error))}\n"
+                    f"Report: {completion.report_path}"
+                )
+            return
+        if choice == "3":
+            return
+        output.error("Choose 1, 2, or 3.")
+
+
+def open_report(report_path: Path) -> None:
+    path = report_path.expanduser().resolve(strict=True)
+    if not path.is_file():
+        raise OSError(f"Report does not exist: {path}")
+    if os.name == "nt":
+        startfile = getattr(os, "startfile", None)
+        if startfile is None:
+            raise RuntimeError("Windows report opener is unavailable.")
+        startfile(str(path))
+        return
+    command = "open" if sys.platform == "darwin" else "xdg-open"
+    subprocess.Popen(
+        [command, str(path)],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def _prompt_yes_no(
+    input_fn: Callable[[str], str],
+    prompt: str,
+) -> bool:
+    return _wizard_input(input_fn, prompt).strip().casefold() in {"y", "yes"}
+
+
+def _wizard_input(input_fn: Callable[[str], str], prompt: str) -> str:
+    try:
+        return input_fn(prompt)
+    except EOFError as error:
+        raise CliError(
+            "Interactive input ended before the wizard was complete.",
+            before_api_calls=True,
+        ) from error
+
+
+def _normalize_pasted_path(value: str) -> str:
+    normalized = value.strip()
+    if (
+        len(normalized) >= 2
+        and normalized[0] == normalized[-1]
+        and normalized[0] in {"'", '"'}
+    ):
+        return normalized[1:-1]
+    return normalized
+
+
+def load_recent_repositories() -> list[str]:
+    path = _recent_repository_store_path()
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return []
+    if not isinstance(raw, dict) or not isinstance(raw.get("repositories"), list):
+        return []
+
+    repositories: list[str] = []
+    seen: set[str] = set()
+    for value in raw["repositories"]:
+        if not isinstance(value, str) or not value.strip():
+            continue
+        path_value = Path(value).expanduser()
+        if not path_value.is_dir():
+            continue
+        try:
+            canonical = str(validate_repository_path(value))
+        except Exception:
+            continue
+        identity = os.path.normcase(canonical)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        repositories.append(canonical)
+        if len(repositories) == RECENT_REPOSITORY_LIMIT:
+            break
+    return repositories
+
+
+def remember_repository(repository: str) -> None:
+    repository_path = Path(repository).expanduser().resolve()
+    canonical = str(repository_path)
+    existing = load_recent_repositories()
+    identity = os.path.normcase(canonical)
+    repositories = [
+        canonical,
+        *[
+            value
+            for value in existing
+            if os.path.normcase(value) != identity
+        ],
+    ][:RECENT_REPOSITORY_LIMIT]
+    path = _recent_repository_store_path().expanduser().resolve()
+    if _is_within(path, repository_path):
+        raise OSError(
+            "Recent repository history location resolves inside the "
+            "analyzed repository; history was not written."
+        )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps({"repositories": repositories}, indent=2),
+        encoding="utf-8",
+    )
+    temporary.replace(path)
+
+
+def clear_recent_repositories() -> bool:
+    path = _recent_repository_store_path()
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def _recent_repository_store_path() -> Path:
+    if os.name == "nt":
+        base = os.environ.get("LOCALAPPDATA")
+        root = Path(base) if base else Path.home() / "AppData" / "Local"
+    else:
+        base = os.environ.get("XDG_CONFIG_HOME")
+        root = Path(base) if base else Path.home() / ".config"
+    return root / "game-feature-council" / "recent-repositories.json"
+
+
+def _is_interactive_terminal() -> bool:
+    return bool(sys.stdin.isatty() and sys.stdout.isatty())
+
+
+def _is_live_terminal(console: Console) -> bool:
+    return bool(console.is_terminal and sys.stdout.isatty())
 
 
 def _review_command(
@@ -640,12 +1092,16 @@ async def _run_command(
     *,
     input_fn: Callable[[str], str],
     output: TerminalOutput,
+    live_output: bool = False,
+    completion_callback: Callable[[RunCompletion], None] | None = None,
 ) -> int:
     from council.context import ContextBuilderError
     from council.evaluation import EvaluationError
     from council.orchestrator import CouncilOrchestrationError
 
     feature = _read_feature_source(args.feature, args.feature_file)
+    output.line("Context Builder: Building repository context")
+    context_started = perf_counter()
     try:
         context = build_context(args.repo, feature)
     except ContextBuilderError as error:
@@ -692,24 +1148,57 @@ async def _run_command(
     execution_started = perf_counter()
     council_execution: CouncilExecution | None = None
     generalist_execution: GeneralistExecution | None = None
+    presenter = ExecutionProgress(
+        args.mode,
+        print_fn=output.line,
+        console=(output.console if isinstance(output, RichOutput) else None),
+        live=live_output,
+        verbose=args.verbose,
+    )
+    presenter.complete_context(
+        (perf_counter() - context_started) * 1_000,
+        context.selected_file_count,
+        context.total_text_characters,
+    )
+    presenter.start()
+    refresh_task = (
+        asyncio.create_task(_refresh_progress(presenter))
+        if live_output
+        else None
+    )
 
     try:
         if args.mode in {MODE_COUNCIL, MODE_BOTH}:
             council_execution = await run_council_with_telemetry(
                 feature,
                 context,
+                progress_listener=presenter,
             )
         if args.mode in {MODE_GENERALIST, MODE_BOTH}:
-            generalist_execution = await run_generalist(feature, context)
+            generalist_execution = await run_generalist(
+                feature,
+                context,
+                progress_listener=presenter,
+            )
+    except asyncio.CancelledError:
+        presenter.fail_remaining()
+        await _stop_progress(presenter, refresh_task)
+        raise
     except (CouncilOrchestrationError, EvaluationError) as error:
+        presenter.fail_remaining()
+        await _stop_progress(presenter, refresh_task)
         raise CliError(str(error), before_api_calls=False) from error
     except Exception as error:
+        presenter.fail_remaining()
+        await _stop_progress(presenter, refresh_task)
         raise CliError(
             f"Model execution failed: {error}",
             before_api_calls=False,
         ) from error
 
     total_runtime_ms = (perf_counter() - execution_started) * 1_000
+    presenter.start_artifacts()
+    artifact_started = perf_counter()
     try:
         run_id, run_directory, report_path = _write_mode_artifacts(
             args.mode,
@@ -721,10 +1210,22 @@ async def _run_command(
             started_at,
         )
     except (EvaluationError, RunArtifactError, OSError, ValueError) as error:
+        presenter.fail_remaining()
+        await _stop_progress(presenter, refresh_task)
         raise CliError(
             f"Artifact writing failed: {error}",
             before_api_calls=False,
         ) from error
+    except Exception as error:
+        presenter.fail_remaining()
+        await _stop_progress(presenter, refresh_task)
+        raise CliError(
+            f"Artifact writing failed: {error}",
+            before_api_calls=False,
+        ) from error
+
+    presenter.complete_artifacts((perf_counter() - artifact_started) * 1_000)
+    await _stop_progress(presenter, refresh_task)
 
     _print_completion(
         args.mode,
@@ -736,7 +1237,37 @@ async def _run_command(
         total_runtime_ms,
         output,
     )
+    if completion_callback is not None:
+        completion_callback(
+            RunCompletion(
+                run_id=run_id,
+                run_directory=run_directory,
+                report_path=report_path,
+            )
+        )
     return 0
+
+
+async def _refresh_progress(presenter: ExecutionProgress) -> None:
+    try:
+        while True:
+            await asyncio.sleep(0.25)
+            presenter.refresh()
+    except asyncio.CancelledError:
+        return
+
+
+async def _stop_progress(
+    presenter: ExecutionProgress,
+    refresh_task: asyncio.Task[None] | None,
+) -> None:
+    if refresh_task is not None:
+        refresh_task.cancel()
+        try:
+            await refresh_task
+        except asyncio.CancelledError:
+            pass
+    presenter.stop()
 
 
 def build_preflight_estimate(

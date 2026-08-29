@@ -349,6 +349,11 @@ def build_context(
     )
 
 
+def validate_repository_path(repository_path: str | Path) -> Path:
+    """Resolve and validate a Git working-tree path without building context."""
+    return _validate_repository(repository_path)
+
+
 def validate_repository_evidence_ids(
     evidence_ids: Iterable[str],
     context: ContextBundle,

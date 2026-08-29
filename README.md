@@ -42,6 +42,39 @@ system Python, which may not have the project dependencies installed:
 If `python -m council` reports `No module named 'agents'`, use the direct
 interpreter above or activate `.venv` in the current PowerShell session.
 
+## Interactive workflow
+
+Launch the guided workflow with no subcommand:
+
+```powershell
+.\.venv\Scripts\council.exe
+```
+
+When the environment is active, `council` is equivalent. The direct module
+fallback is also supported:
+
+```powershell
+.\.venv\Scripts\python.exe -m council
+```
+
+The wizard validates a Git repository, accepts a pasted multiline feature or
+UTF-8 feature file, selects Council/Generalist/both, builds the real preflight,
+and asks for explicit consent (default No). After consent, a live terminal
+view shows stage status, elapsed time, completed-call token usage, and cost;
+redirected output uses plain operational lines. A completed interactive run
+can launch the existing offline review or safely open its report.
+
+Up to five successfully used repository paths are stored only as convenience
+metadata at `%LOCALAPPDATA%\game-feature-council\recent-repositories.json` on
+Windows (or `$XDG_CONFIG_HOME/game-feature-council/recent-repositories.json`,
+falling back to `~/.config`). Feature text, repository contents, and API keys
+are never stored there, and history writing is refused if that resolved
+location would be inside the analyzed repository. Clear this history with:
+
+```powershell
+council config clear-recent
+```
+
 Configure real runs with process-scoped PowerShell environment variables:
 
 ```powershell
@@ -68,8 +101,8 @@ problem, feature idea, goal, constraints, open questions, and explicitly
 missing decision thresholds.
 
 Supply exactly one feature source. A feature file must exist, be UTF-8 text, and
-contain non-whitespace content. Interactive feature entry belongs to a future
-CLI phase.
+contain non-whitespace content. The root wizard collects the same inputs
+interactively without changing their content.
 
 ## Dry run
 
@@ -96,6 +129,15 @@ council run `
 
 ## Real runs
 
+Advanced/scripted usage remains available. For example:
+
+```powershell
+council run `
+  --repo "D:\Projects\MyGame" `
+  --feature "Add a new gameplay mode." `
+  --mode both
+```
+
 Council only:
 
 ```powershell
@@ -116,7 +158,9 @@ council run --repo "C:\path\to\game-repository" --feature-file ".\examples\featu
 
 `both` is the default mode. Use `--output-dir` to select an artifact root;
 otherwise runs are written beneath `runs/` relative to the current directory.
-The output root must not be inside the analyzed repository.
+The output root must not be inside the analyzed repository. Add `--verbose` for
+completed-stage request/token details; it never prints model reasoning or
+repository source.
 
 ## Cost and consent
 

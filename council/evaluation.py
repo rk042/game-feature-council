@@ -28,6 +28,7 @@ from council.pricing import (
 
 if TYPE_CHECKING:
     from council.orchestrator import AgentExecutor, MonotonicClock
+    from council.progress import ProgressListener
 
 
 RUBRIC_DIMENSIONS = (
@@ -53,6 +54,7 @@ async def run_generalist(
     *,
     pricing: PricingSnapshot = DEFAULT_PRICING_SNAPSHOT,
     clock: MonotonicClock = perf_counter,
+    progress_listener: ProgressListener | None = None,
 ) -> GeneralistExecution:
     from council.orchestrator import (
         CouncilOrchestrationError,
@@ -73,6 +75,7 @@ async def run_generalist(
             DirectorResult,
             execute,
             clock,
+            progress_listener,
         )
     except CouncilOrchestrationError as error:
         raise EvaluationError(f"Generalist execution failed: {error}") from error

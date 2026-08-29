@@ -552,6 +552,8 @@ class CliTests(unittest.TestCase):
             async def council_run(
                 feature: str,
                 supplied_context: ContextBundle,
+                *,
+                progress_listener=None,
             ) -> CouncilExecution:
                 self.assertEqual(feature, FEATURE)
                 seen_contexts.append(supplied_context)
@@ -560,6 +562,8 @@ class CliTests(unittest.TestCase):
             async def generalist_run(
                 feature: str,
                 supplied_context: ContextBundle,
+                *,
+                progress_listener=None,
             ) -> GeneralistExecution:
                 self.assertEqual(feature, FEATURE)
                 seen_contexts.append(supplied_context)

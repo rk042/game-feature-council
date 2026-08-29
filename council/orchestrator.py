@@ -38,6 +38,12 @@ from council.models import (
     TechnicalResult,
     TokenUsage,
 )
+from council.progress import (
+    ProgressEvent,
+    ProgressListener,
+    ProgressStatus,
+    make_progress_event,
+)
 
 
 _execute_agent = execute_agent
@@ -66,11 +72,14 @@ async def run_council(
     feature: str,
     context: ContextBundle,
     agent_executor: AgentExecutor | None = None,
+    *,
+    progress_listener: ProgressListener | None = None,
 ) -> CouncilResult:
     execution = await run_council_with_telemetry(
         feature,
         context,
         agent_executor,
+        progress_listener=progress_listener,
     )
     return execution.result
 
@@ -82,6 +91,7 @@ async def run_council_with_telemetry(
     *,
     clock: MonotonicClock = perf_counter,
     utc_now: UtcNow | None = None,
+    progress_listener: ProgressListener | None = None,
 ) -> CouncilExecution:
     execute = agent_executor or _execute_agent
     started_at = (utc_now or _utc_now)()
@@ -98,6 +108,7 @@ async def run_council_with_telemetry(
         specialist_input,
         execute,
         clock,
+        progress_listener,
     )
     validate_specialist_evidence(
         context,
@@ -122,6 +133,7 @@ async def run_council_with_telemetry(
         ProducerResult,
         execute,
         clock,
+        progress_listener,
     )
     validate_producer_evidence(context, producer)
 
@@ -141,6 +153,7 @@ async def run_council_with_telemetry(
         DirectorResult,
         execute,
         clock,
+        progress_listener,
     )
     director = _normalize_director_effort_confidence(director)
 
@@ -339,6 +352,7 @@ async def _run_specialists(
     specialist_input: str,
     execute: AgentExecutor,
     clock: MonotonicClock,
+    progress_listener: ProgressListener | None,
 ) -> tuple[
     GameDesignResult,
     TechnicalResult,
@@ -357,6 +371,7 @@ async def _run_specialists(
                     GameDesignResult,
                     execute,
                     clock,
+                    progress_listener,
                 )
             )
             technical_task = task_group.create_task(
@@ -368,6 +383,7 @@ async def _run_specialists(
                     TechnicalResult,
                     execute,
                     clock,
+                    progress_listener,
                 )
             )
             analytics_task = task_group.create_task(
@@ -379,6 +395,7 @@ async def _run_specialists(
                     AnalyticsResult,
                     execute,
                     clock,
+                    progress_listener,
                 )
             )
             scope_risk_task = task_group.create_task(
@@ -390,6 +407,7 @@ async def _run_specialists(
                     ScopeRiskResult,
                     execute,
                     clock,
+                    progress_listener,
                 )
             )
     except* CouncilOrchestrationError as error_group:
@@ -424,13 +442,33 @@ async def _run_typed_agent(
     expected_type: type[ResultType],
     execute: AgentExecutor,
     clock: MonotonicClock,
+    progress_listener: ProgressListener | None = None,
 ) -> tuple[ResultType, RoleTelemetry]:
     started = clock()
+    model = _agent_model_name(agent)
+    _emit_progress(
+        progress_listener,
+        make_progress_event(
+            role_key,
+            ProgressStatus.STARTED,
+            model=model,
+        ),
+    )
     try:
         execution = await execute(agent, input_text)
     except asyncio.CancelledError:
         raise
     except Exception as error:
+        _emit_progress(
+            progress_listener,
+            make_progress_event(
+                role_key,
+                ProgressStatus.FAILED,
+                duration_ms=(clock() - started) * 1_000,
+                model=model,
+                message=str(error),
+            ),
+        )
         raise CouncilOrchestrationError(
             f"{role} execution failed: {error}"
         ) from error
@@ -444,18 +482,56 @@ async def _run_typed_agent(
         usage = TokenUsage()
 
     if not isinstance(output, expected_type):
-        raise CouncilOrchestrationError(
+        message = (
             f"{role} returned {type(output).__name__}; "
             f"expected {expected_type.__name__}."
         )
-    return (
-        cast(ResultType, output),
-        RoleTelemetry(
-            model=_agent_model_name(agent),
+        _emit_progress(
+            progress_listener,
+            make_progress_event(
+                role_key,
+                ProgressStatus.FAILED,
+                duration_ms=duration_ms,
+                model=model,
+                usage=usage,
+                message=message,
+            ),
+        )
+        raise CouncilOrchestrationError(
+            message
+        )
+    telemetry = RoleTelemetry(
+        model=model,
+        duration_ms=duration_ms,
+        usage=usage,
+    )
+    _emit_progress(
+        progress_listener,
+        make_progress_event(
+            role_key,
+            ProgressStatus.COMPLETED,
             duration_ms=duration_ms,
+            model=model,
             usage=usage,
         ),
     )
+    return (
+        cast(ResultType, output),
+        telemetry,
+    )
+
+
+def _emit_progress(
+    listener: ProgressListener | None,
+    event: ProgressEvent,
+) -> None:
+    if listener is None:
+        return
+    try:
+        listener(event)
+    except Exception:
+        # Observers are presentation-only and cannot affect execution.
+        return
 
 
 def _aggregate_usage(
