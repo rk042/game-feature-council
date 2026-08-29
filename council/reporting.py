@@ -39,6 +39,7 @@ EXPECTED_ARTIFACT_FILES = frozenset(
         "director.json",
         "run.json",
         "report.md",
+        "report.html",
     }
 )
 EXPECTED_EVALUATION_ARTIFACT_FILES = EXPECTED_ARTIFACT_FILES | {
@@ -46,7 +47,13 @@ EXPECTED_EVALUATION_ARTIFACT_FILES = EXPECTED_ARTIFACT_FILES | {
     "comparison.json",
 }
 EXPECTED_GENERALIST_ARTIFACT_FILES = frozenset(
-    {"input.json", "context.json", "generalist.json", "report.md"}
+    {
+        "input.json",
+        "context.json",
+        "generalist.json",
+        "report.md",
+        "report.html",
+    }
 )
 _SAFE_RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 _WINDOWS_RESERVED_NAMES = frozenset(
@@ -163,6 +170,10 @@ def write_run_artifacts(
         render_markdown_report(record),
         encoding="utf-8",
     )
+    (run_directory / "report.html").write_text(
+        render_html_report(record),
+        encoding="utf-8",
+    )
     return run_directory
 
 
@@ -202,6 +213,16 @@ def write_generalist_artifacts(
     )
     (run_directory / "report.md").write_text(
         _render_generalist_report(run_id, feature_input, context, execution),
+        encoding="utf-8",
+    )
+    (run_directory / "report.html").write_text(
+        render_generalist_html_report(
+            run_id,
+            feature_input,
+            context,
+            execution,
+            started_at=started_at,
+        ),
         encoding="utf-8",
     )
     return run_directory
@@ -262,6 +283,10 @@ def update_run_with_human_decision(
 
     run_path = _existing_artifact_path(directory, "run.json")
     report_path = _existing_artifact_path(directory, "report.md")
+    html_report_path = _optional_existing_artifact_path(
+        directory,
+        "report.html",
+    )
     comparison = _read_optional_comparison(directory)
     if comparison is not None:
         if comparison.council_run_id != record.run_id:
@@ -281,6 +306,11 @@ def update_run_with_human_decision(
         ),
         encoding="utf-8",
     )
+    if html_report_path is not None:
+        html_report_path.write_text(
+            render_html_report(updated_record, comparison),
+            encoding="utf-8",
+        )
     return updated_record
 
 
@@ -314,6 +344,15 @@ def write_evaluation_artifacts(
         render_markdown_report(record, comparison),
         encoding="utf-8",
     )
+    html_report_path = _optional_existing_artifact_path(
+        directory,
+        "report.html",
+    )
+    if html_report_path is not None:
+        html_report_path.write_text(
+            render_html_report(record, comparison),
+            encoding="utf-8",
+        )
 
 
 def update_comparison_with_human_review(
@@ -324,6 +363,10 @@ def update_comparison_with_human_review(
     record = _read_run_record(directory)
     comparison_path = _existing_artifact_path(directory, "comparison.json")
     report_path = _existing_artifact_path(directory, "report.md")
+    html_report_path = _optional_existing_artifact_path(
+        directory,
+        "report.html",
+    )
 
     try:
         comparison = ComparisonRecord.model_validate_json(
@@ -351,6 +394,11 @@ def update_comparison_with_human_review(
         render_markdown_report(record, updated),
         encoding="utf-8",
     )
+    if html_report_path is not None:
+        html_report_path.write_text(
+            render_html_report(record, updated),
+            encoding="utf-8",
+        )
     return updated
 
 
@@ -471,6 +519,38 @@ def render_markdown_report(
         "",
     ]
     return "\n".join(report)
+
+
+def render_html_report(
+    record: RunRecord,
+    comparison: ComparisonRecord | None = None,
+) -> str:
+    from council.html_reporting import render_html_report as render
+
+    return render(
+        record,
+        comparison,
+        risks_and_unknowns=_risks_and_unknowns(record),
+    )
+
+
+def render_generalist_html_report(
+    run_id: str,
+    feature_input: str,
+    context: ContextBundle,
+    execution: GeneralistExecution,
+    *,
+    started_at: datetime,
+) -> str:
+    from council.html_reporting import render_generalist_html_report as render
+
+    return render(
+        run_id,
+        feature_input,
+        context,
+        execution,
+        started_at=started_at.isoformat(),
+    )
 
 
 def _prompt_for_modified_decision(
@@ -809,6 +889,7 @@ def load_review_artifacts(
         if comparison is not None:
             _validate_comparison_identity(record, comparison)
         _existing_artifact_path(directory, "report.md")
+        _optional_existing_artifact_path(directory, "report.html")
         return ReviewArtifacts(
             run_directory=directory,
             run_record=record,
@@ -871,6 +952,7 @@ def _read_generalist_only_execution(
     context_path = _existing_artifact_path(directory, "context.json")
     generalist_path = _existing_artifact_path(directory, "generalist.json")
     _existing_artifact_path(directory, "report.md")
+    _optional_existing_artifact_path(directory, "report.html")
 
     try:
         input_payload = json.loads(input_path.read_text(encoding="utf-8"))
@@ -959,6 +1041,16 @@ def _existing_artifact_path(directory: Path, filename: str) -> Path:
     if not _is_within(resolved, directory) or not resolved.is_file():
         raise RunArtifactError(f"Unsafe or invalid artifact path: {path}")
     return resolved
+
+
+def _optional_existing_artifact_path(
+    directory: Path,
+    filename: str,
+) -> Path | None:
+    path = Path(directory).expanduser().resolve() / filename
+    if not path.exists() and not path.is_symlink():
+        return None
+    return _existing_artifact_path(directory, filename)
 
 
 def _comparison_report_lines(

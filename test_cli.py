@@ -487,7 +487,7 @@ class CliTests(unittest.TestCase):
             rendered = "\n".join(output)
             self.assertIn("Director decision: PROTOTYPE_FIRST", rendered)
             self.assertIn("Council model calls: 6", rendered)
-            self.assertIn(f"Report: {run_directory / 'report.md'}", rendered)
+            self.assertIn(f"Report: {run_directory / 'report.html'}", rendered)
             self.assertIn(f"Run directory: {run_directory}", rendered)
             self.assertNotIn(MODEL_ENVIRONMENT["OPENAI_API_KEY"], rendered)
             for artifact in run_directory.iterdir():
@@ -535,7 +535,7 @@ class CliTests(unittest.TestCase):
             self.assertIn("Generalist decision: PROTOTYPE_FIRST", rendered)
             self.assertIn("Council model calls: 0", rendered)
             self.assertIn("Generalist model calls: 1", rendered)
-            self.assertIn(f"Report: {run_directory / 'report.md'}", rendered)
+            self.assertIn(f"Report: {run_directory / 'report.html'}", rendered)
 
     def test_successful_both_reuses_one_context_and_writes_comparison(
         self,

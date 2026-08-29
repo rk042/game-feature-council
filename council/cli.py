@@ -985,7 +985,7 @@ def _review_command(
             changed_files.extend(
                 [
                     artifacts.run_directory / "run.json",
-                    artifacts.run_directory / "report.md",
+                    *_review_report_paths(artifacts.run_directory),
                 ]
             )
 
@@ -1001,7 +1001,7 @@ def _review_command(
             changed_files.extend(
                 [
                     artifacts.run_directory / "comparison.json",
-                    artifacts.run_directory / "report.md",
+                    *_review_report_paths(artifacts.run_directory),
                 ]
             )
     except EOFError as error:
@@ -1039,6 +1039,14 @@ def _review_command(
     else:
         print_fn("Updated: none")
     return 0
+
+
+def _review_report_paths(run_directory: Path) -> list[Path]:
+    paths = [run_directory / "report.md"]
+    html_path = run_directory / "report.html"
+    if html_path.is_file() and not html_path.is_symlink():
+        paths.append(html_path)
+    return paths
 
 
 def _print_review_summary(
@@ -1602,7 +1610,7 @@ def _write_mode_artifacts(
             output_root,
             started_at=started_at,
         )
-        return run_id, run_directory, run_directory / "report.md"
+        return run_id, run_directory, _preferred_report_path(run_directory)
 
     if council_execution is None:
         raise ValueError("Council execution is missing.")
@@ -1617,7 +1625,14 @@ def _write_mode_artifacts(
     run_directory = write_run_artifacts(record, output_root)
     if comparison is not None:
         write_evaluation_artifacts(run_directory, comparison)
-    return record.run_id, run_directory, run_directory / "report.md"
+    return record.run_id, run_directory, _preferred_report_path(run_directory)
+
+
+def _preferred_report_path(run_directory: Path) -> Path:
+    html_path = run_directory / "report.html"
+    if html_path.is_file() and not html_path.is_symlink():
+        return html_path
+    return run_directory / "report.md"
 
 
 def _print_completion(

@@ -215,19 +215,23 @@ Each run uses a dedicated directory beneath the selected output root.
 
 | Mode | Files |
 | --- | --- |
-| Council | `input.json`, `context.json`, `game_design.json`, `technical.json`, `analytics.json`, `scope_risk.json`, `producer.json`, `director.json`, `run.json`, `report.md` |
+| Council | `input.json`, `context.json`, `game_design.json`, `technical.json`, `analytics.json`, `scope_risk.json`, `producer.json`, `director.json`, `run.json`, `report.md`, `report.html` |
 | Both | All Council files plus `generalist.json` and `comparison.json` |
-| Generalist | `input.json`, `context.json`, `generalist.json`, `report.md` |
+| Generalist | `input.json`, `context.json`, `generalist.json`, `report.md`, `report.html` |
 
 Structured JSON preserves the complete agent outputs. `report.md` is the
 human-facing projection; it deterministically removes exact and safely
 normalized duplicate risks while keeping materially distinct items. This uses
-no model call and does not alter raw JSON.
+no model call and does not alter raw JSON. `report.html` is a deterministic,
+self-contained visual projection of the same persisted data. It loads no
+external resources and does not infer missing scores, metrics, or conclusions.
 
-A Product/Director review changes only `run.json` and `report.md`. A comparison
-review changes only `comparison.json` and `report.md`. If a Product decision is
-validly persisted before a later comparison update fails, it remains valid;
-the CLI returns non-zero and does not claim the whole review completed.
+A Product/Director review changes `run.json`, `report.md`, and an existing
+`report.html`. A comparison review changes `comparison.json`, `report.md`, and
+an existing `report.html`. Review does not add HTML to historical runs that do
+not already have it. If a Product decision is validly persisted before a later
+comparison update fails, it remains valid; the CLI returns non-zero and does
+not claim the whole review completed.
 
 ## V1 non-goals
 

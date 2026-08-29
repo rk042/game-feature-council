@@ -62,7 +62,9 @@ UTF-8 feature file, selects Council/Generalist/both, builds the real preflight,
 and asks for explicit consent (default No). After consent, a live terminal
 view shows stage status, elapsed time, completed-call token usage, and cost;
 redirected output uses plain operational lines. A completed interactive run
-can launch the existing offline review or safely open its report.
+can launch the existing offline review or safely open its report. New runs
+open the self-contained visual `report.html`; the CLI falls back to `report.md`
+for older runs that do not have HTML.
 
 Up to five successfully used repository paths are stored only as convenience
 metadata at `%LOCALAPPDATA%\game-feature-council\recent-repositories.json` on
@@ -188,8 +190,9 @@ Use `--yes` only when explicit non-interactive consent has already been given.
 ## Artifacts
 
 Council runs retain the established artifacts: input, context, four specialist
-results, Producer, Director, run metadata, and `report.md`. Combined runs also
-include `generalist.json` and `comparison.json`, with human comparison pending.
+results, Producer, Director, run metadata, `report.md`, and `report.html`.
+Combined runs also include `generalist.json` and `comparison.json`, with human
+comparison pending.
 
 Standalone Generalist runs contain:
 
@@ -197,6 +200,12 @@ Standalone Generalist runs contain:
 - `context.json`
 - `generalist.json`
 - `report.md`
+- `report.html`
+
+`report.md` remains the compact audit-friendly text projection. `report.html`
+is a responsive, printable, self-contained visual projection of the same
+persisted data. It performs no additional AI analysis, loads no network
+resources, and never invents comparison scores or unavailable metrics.
 
 The CLI never writes to the analyzed repository and does not invoke Unity,
 deploy services, or change Git configuration.
@@ -211,8 +220,9 @@ Product/Director accept, reject, or modify decisions through
 For combined runs, the existing comparison workflow records the eight rubric
 scores, Generalist/Council/Tie preference, and required reason through
 `prompt_for_comparison_review` and `update_comparison_with_human_review`.
-Review updates persist into the existing JSON/report artifacts without
-rerunning models.
+Review updates persist into the existing JSON and Markdown report and, when a
+run already has `report.html`, regenerate that HTML from the updated artifacts.
+No model is rerun. Historical runs without HTML are not modified to add it.
 
 Complete pending human review from the CLI with:
 

@@ -306,7 +306,7 @@ class Phase2CliTests(unittest.TestCase):
         completion = RunCompletion(
             run_id="run-id",
             run_directory=Path("D:/runs/run-id"),
-            report_path=Path("D:/runs/run-id/report.md"),
+            report_path=Path("D:/runs/run-id/report.html"),
         )
         output: list[str] = []
         with patch("council.cli.open_report", side_effect=OSError("no shell")):

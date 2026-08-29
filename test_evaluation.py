@@ -288,7 +288,7 @@ class EvaluationTests(unittest.IsolatedAsyncioTestCase):
             council_artifacts_before = {
                 name: (run_directory / name).read_bytes()
                 for name in EXPECTED_ARTIFACT_FILES
-                if name != "report.md"
+                if name not in {"report.md", "report.html"}
             }
             comparison = create_comparison_record(
                 council_run,

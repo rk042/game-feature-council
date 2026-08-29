@@ -409,7 +409,7 @@ class ReportingTests(unittest.TestCase):
             unchanged_before = {
                 path.name: path.read_bytes()
                 for path in run_directory.iterdir()
-                if path.name not in {"run.json", "report.md"}
+                if path.name not in {"run.json", "report.md", "report.html"}
             }
             decision = HumanDecision(
                 action=HumanAction.MODIFY,
@@ -443,6 +443,7 @@ class ReportingTests(unittest.TestCase):
             first_rewrite = {
                 "run.json": (run_directory / "run.json").read_bytes(),
                 "report.md": (run_directory / "report.md").read_bytes(),
+                "report.html": (run_directory / "report.html").read_bytes(),
             }
             update_run_with_human_decision(run_directory, decision)
             second_rewrite = {

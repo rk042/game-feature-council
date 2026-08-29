@@ -126,7 +126,7 @@ class ReviewCliTests(unittest.TestCase):
                     )
                     self.assertEqual(
                         self._changed_files(before, fixture.run_directory),
-                        {"run.json", "report.md"},
+                        {"run.json", "report.md", "report.html"},
                     )
                     rendered = "\n".join(output)
                     self.assertIn(f"Run: {RUN_ID}", rendered)
@@ -137,6 +137,7 @@ class ReviewCliTests(unittest.TestCase):
                     self.assertIn("Human review complete", rendered)
                     self.assertIn("run.json", rendered)
                     self.assertIn("report.md", rendered)
+                    self.assertIn("report.html", rendered)
                     self.assertNotIn("comparison.json", rendered)
 
     def test_completed_product_and_comparison_are_idempotent(self) -> None:
@@ -566,12 +567,22 @@ class ReviewCliTests(unittest.TestCase):
             build_context.assert_not_called()
             self.assertEqual(
                 self._changed_files(run_before, fixture.run_directory),
-                {"run.json", "comparison.json", "report.md"},
+                {
+                    "run.json",
+                    "comparison.json",
+                    "report.md",
+                    "report.html",
+                },
             )
             self.assertEqual(self._snapshot(fixture.target_repository), target_before)
             rendered = "\n".join(output)
             self.assertIn("Updated:", rendered)
-            for filename in ("run.json", "comparison.json", "report.md"):
+            for filename in (
+                "run.json",
+                "comparison.json",
+                "report.md",
+                "report.html",
+            ):
                 self.assertIn(filename, rendered)
             for filename in (
                 "context.json",
