@@ -1,5 +1,5 @@
-from council.cli import main
+from council.cli import console_main
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    console_main()

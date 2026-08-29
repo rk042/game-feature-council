@@ -21,14 +21,19 @@ install the project in editable mode:
 py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -e .
+council --help
 ```
 
 The dependency declaration pins the direct runtime dependencies to the audited
 prototype versions. Exact pins avoid an unreviewed Agents SDK or validation
 behavior change; update them deliberately with the test suite.
 
+The installed `council` command and `python -m council` invoke the same CLI.
+The module form remains supported for environments where the console-script
+directory is not on `PATH`.
+
 Activation is optional. The direct-interpreter form avoids accidentally using
-system Python, which may not have the Agents SDK installed:
+system Python, which may not have the project dependencies installed:
 
 ```powershell
 .\.venv\Scripts\python.exe -m council --help
@@ -54,20 +59,24 @@ The API key is never written to run artifacts or printed by the CLI.
 
 ## Feature input
 
-The committed project-agnostic example is `examples/feature.txt`. It includes a
-player/product problem, feature idea, goal, constraints, open questions, and
-explicitly missing decision thresholds.
+For a short request, supply raw feature text with `--feature`. Its content is
+passed unchanged to the Context Builder and every selected evaluation path.
 
-The file must exist and contain non-whitespace text. Its content is passed
-unchanged to every selected evaluation path.
+For a longer specification, use `--feature-file`. The committed
+project-agnostic example is `examples/feature.txt`; it includes a player/product
+problem, feature idea, goal, constraints, open questions, and explicitly
+missing decision thresholds.
+
+Supply exactly one feature source. A feature file must exist, be UTF-8 text, and
+contain non-whitespace content. Interactive feature entry belongs to a future
+CLI phase.
 
 ## Dry run
 
 ```powershell
-.\.venv\Scripts\python.exe -m council run `
-  --repo "C:\path\to\game-repository" `
-  --feature-file ".\examples\feature.txt" `
-  --mode both `
+council run `
+  --repo "D:\Projects\MyGame" `
+  --feature "Add a new gameplay mode while reusing the existing progression system." `
   --dry-run
 ```
 
@@ -75,24 +84,34 @@ A dry run validates the inputs, inspects the Git working tree, builds one
 bounded `ContextBundle`, and prints the model, call-count, token, and cost
 preflight. It makes no model calls and creates no run artifacts.
 
+For a larger feature specification:
+
+```powershell
+council run `
+  --repo "C:\path\to\game-repository" `
+  --feature-file ".\examples\feature.txt" `
+  --mode both `
+  --dry-run
+```
+
 ## Real runs
 
 Council only:
 
 ```powershell
-.\.venv\Scripts\python.exe -m council run --repo "C:\path\to\game-repository" --feature-file ".\examples\feature.txt" --mode council
+council run --repo "C:\path\to\game-repository" --feature-file ".\examples\feature.txt" --mode council
 ```
 
 Generalist only:
 
 ```powershell
-.\.venv\Scripts\python.exe -m council run --repo "C:\path\to\game-repository" --feature-file ".\examples\feature.txt" --mode generalist
+council run --repo "C:\path\to\game-repository" --feature-file ".\examples\feature.txt" --mode generalist
 ```
 
 Council and Generalist, using the same canonical context:
 
 ```powershell
-.\.venv\Scripts\python.exe -m council run --repo "C:\path\to\game-repository" --feature-file ".\examples\feature.txt" --mode both
+council run --repo "C:\path\to\game-repository" --feature-file ".\examples\feature.txt" --mode both
 ```
 
 `both` is the default mode. Use `--output-dir` to select an artifact root;

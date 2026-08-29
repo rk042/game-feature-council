@@ -1,4 +1,3 @@
-import argparse
 import asyncio
 import math
 import os
@@ -6,9 +5,19 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
+from enum import Enum
 from pathlib import Path
 from time import perf_counter
+from types import SimpleNamespace
+from typing import Protocol
 from uuid import uuid4
+
+import typer
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
+from typer.main import get_command
 
 from council.evaluation import prompt_for_comparison_review
 from council.models import (
@@ -53,6 +62,20 @@ CONSERVATIVE_TOKEN_MULTIPLIER = 2
 REDACTION_MARKER = "[REDACTED]"
 
 
+app = typer.Typer(
+    name="council",
+    help="Evaluate game-feature experiments against a Git repository.",
+    no_args_is_help=True,
+    add_completion=False,
+)
+
+
+class RunMode(str, Enum):
+    COUNCIL = MODE_COUNCIL
+    GENERALIST = MODE_GENERALIST
+    BOTH = MODE_BOTH
+
+
 class CliError(RuntimeError):
     def __init__(self, message: str, *, before_api_calls: bool) -> None:
         super().__init__(message)
@@ -77,57 +100,267 @@ class PreflightEstimate:
     unpriced_models: tuple[str, ...]
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="python -m council",
-        description="Run the Game Feature Council evaluation pipeline.",
-    )
-    commands = parser.add_subparsers(dest="command", required=True)
-    run_parser = commands.add_parser(
-        "run",
-        help="Evaluate a feature against a Git repository.",
-    )
-    run_parser.add_argument("--repo", required=True)
-    run_parser.add_argument("--feature-file", required=True)
-    run_parser.add_argument(
+@dataclass(frozen=True)
+class RunArguments:
+    repo: str
+    feature: str | None
+    feature_file: str | None
+    mode: str
+    max_cost_usd: Decimal | None
+    dry_run: bool
+    yes: bool
+    output_dir: str
+
+
+@dataclass(frozen=True)
+class ReviewArguments:
+    run: str
+    output_dir: str
+
+
+class TerminalOutput(Protocol):
+    def line(self, text: str) -> None: ...
+
+    def heading(self, text: str) -> None: ...
+
+    def preflight(
+        self,
+        context: ContextBundle,
+        mode: str,
+        specialist_model: str | None,
+        synthesis_model: str,
+        estimate: PreflightEstimate,
+    ) -> None: ...
+
+    def warning(self, text: str) -> None: ...
+
+    def error(self, text: str) -> None: ...
+
+    def success(self, text: str) -> None: ...
+
+
+class PlainOutput:
+    def __init__(self, print_fn: Callable[[str], None]) -> None:
+        self._print = print_fn
+
+    def line(self, text: str) -> None:
+        self._print(text)
+
+    def heading(self, text: str) -> None:
+        self._print(text)
+
+    def preflight(
+        self,
+        context: ContextBundle,
+        mode: str,
+        specialist_model: str | None,
+        synthesis_model: str,
+        estimate: PreflightEstimate,
+    ) -> None:
+        self._print("Preflight estimate (rough; actual telemetry is authoritative)")
+        for label, value in _preflight_rows(
+            context,
+            mode,
+            specialist_model,
+            synthesis_model,
+            estimate,
+        ):
+            self._print(f"{label}: {value}")
+
+    def warning(self, text: str) -> None:
+        self._print(text)
+
+    def error(self, text: str) -> None:
+        self._print(f"Error: {text}")
+
+    def success(self, text: str) -> None:
+        self._print(text)
+
+
+class RichOutput:
+    def __init__(self, console: Console | None = None) -> None:
+        self._console = console or Console()
+        self._error_console = Console(stderr=True)
+
+    def line(self, text: str) -> None:
+        self._console.print(text, markup=False)
+
+    def heading(self, text: str) -> None:
+        self._console.print(f"[bold cyan]{text}[/bold cyan]")
+
+    def preflight(
+        self,
+        context: ContextBundle,
+        mode: str,
+        specialist_model: str | None,
+        synthesis_model: str,
+        estimate: PreflightEstimate,
+    ) -> None:
+        table = Table(
+            title="Preflight estimate",
+            caption="Rough estimate; completed-run telemetry is authoritative.",
+        )
+        table.add_column("Item", style="bold")
+        table.add_column("Value")
+        for label, value in _preflight_rows(
+            context,
+            mode,
+            specialist_model,
+            synthesis_model,
+            estimate,
+        ):
+            table.add_row(label, value)
+        self._console.print(table)
+
+    def warning(self, text: str) -> None:
+        self._console.print(
+            Panel(Text(text), title="Notice", border_style="yellow")
+        )
+
+    def error(self, text: str) -> None:
+        self._error_console.print(
+            Panel(Text(text), title="Error", border_style="red")
+        )
+
+    def success(self, text: str) -> None:
+        self._console.print(f"[bold green]{text}[/bold green]")
+
+
+def _validate_cost_option(
+    _context: typer.Context,
+    _parameter: typer.CallbackParam,
+    value: str | None,
+) -> Decimal | None:
+    if value is None:
+        return None
+    try:
+        parsed = Decimal(value)
+    except InvalidOperation as error:
+        raise typer.BadParameter("must be a non-negative decimal value") from error
+    if not parsed.is_finite() or parsed < 0:
+        raise typer.BadParameter("must be a non-negative decimal value")
+    return parsed
+
+
+@app.command("run")
+def typer_run_command(
+    repo: str = typer.Option(..., "--repo", help="Git repository to inspect."),
+    feature: str | None = typer.Option(
+        None,
+        "--feature",
+        help="Feature text supplied directly; use exactly one feature source.",
+    ),
+    feature_file: str | None = typer.Option(
+        None,
+        "--feature-file",
+        help="UTF-8 feature text file; use exactly one feature source.",
+    ),
+    mode: RunMode = typer.Option(
+        RunMode.BOTH,
         "--mode",
-        choices=MODES,
-        default=MODE_BOTH,
-    )
-    run_parser.add_argument(
+        help="Evaluation path: council, generalist, or both.",
+    ),
+    max_cost_usd: str | None = typer.Option(
+        None,
         "--max-cost-usd",
-        type=_non_negative_decimal,
-    )
-    run_parser.add_argument(
+        callback=_validate_cost_option,
+        help="Conservative preflight cost ceiling in USD.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
         "--dry-run",
-        action="store_true",
-        help="Show preflight information without making API calls.",
-    )
-    run_parser.add_argument(
+        help="Build context and show preflight without API calls or artifacts.",
+    ),
+    yes: bool = typer.Option(
+        False,
         "--yes",
-        action="store_true",
-        help="Explicitly consent without an interactive prompt.",
-    )
-    run_parser.add_argument(
+        help="Explicitly consent without the interactive prompt.",
+    ),
+    output_dir: str = typer.Option(
+        "runs",
         "--output-dir",
-        default="runs",
         help="Artifact root directory (default: runs).",
+    ),
+) -> None:
+    output = RichOutput()
+    output.heading("Game Feature Council")
+    arguments = RunArguments(
+        repo=repo,
+        feature=feature,
+        feature_file=feature_file,
+        mode=mode.value,
+        max_cost_usd=max_cost_usd,
+        dry_run=dry_run,
+        yes=yes,
+        output_dir=output_dir,
     )
-    review_parser = commands.add_parser(
-        "review",
-        help="Complete pending human review for an existing run.",
+    _exit_for_code(
+        _run_with_error_boundary(
+            "run",
+            lambda: asyncio.run(
+                _run_command(arguments, input_fn=input, output=output)
+            ),
+            output,
+        )
     )
-    review_parser.add_argument("--run", required=True)
-    review_parser.add_argument(
+
+
+@app.command("review")
+def typer_review_command(
+    run: str = typer.Option(..., "--run", help="Existing run identifier."),
+    output_dir: str = typer.Option(
+        "runs",
         "--output-dir",
-        default="runs",
         help="Artifact root directory containing the run (default: runs).",
+    ),
+) -> None:
+    output = RichOutput()
+    output.heading("Game Feature Council Review")
+    arguments = ReviewArguments(run=run, output_dir=output_dir)
+    _exit_for_code(
+        _run_with_error_boundary(
+            "review",
+            lambda: _review_command(
+                arguments,
+                input_fn=input,
+                print_fn=output.line,
+            ),
+            output,
+        )
     )
-    return parser
 
 
-def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    return build_parser().parse_args(argv)
+def _exit_for_code(code: int) -> None:
+    if code:
+        raise typer.Exit(code)
+
+
+def console_main() -> None:
+    """Console-script and ``python -m council`` entry point."""
+    app()
+
+
+def parse_args(argv: Sequence[str] | None = None) -> SimpleNamespace:
+    """Compatibility helper backed by the Typer command tree."""
+    command = get_command(app)
+    context = command.make_context(
+        "council",
+        [],
+        resilient_parsing=True,
+    )
+    command_name, subcommand, remaining = command.resolve_command(
+        context,
+        list(argv or ()),
+    )
+    subcontext = subcommand.make_context(
+        command_name,
+        remaining,
+        parent=context,
+    )
+    values = dict(subcontext.params)
+    if isinstance(values.get("mode"), RunMode):
+        values["mode"] = values["mode"].value
+    return SimpleNamespace(command=command_name, **values)
 
 
 def main(
@@ -137,38 +370,68 @@ def main(
     print_fn: Callable[[str], None] = print,
 ) -> int:
     args = parse_args(argv)
-    try:
-        if args.command == "review":
-            return _review_command(
-                args,
+    output = PlainOutput(print_fn)
+    if args.command == "review":
+        return _run_with_error_boundary(
+            "review",
+            lambda: _review_command(
+                ReviewArguments(args.run, args.output_dir),
                 input_fn=input_fn,
-                print_fn=print_fn,
-            )
-        return asyncio.run(
-            _run_command(args, input_fn=input_fn, print_fn=print_fn)
+                print_fn=output.line,
+            ),
+            output,
         )
+    return _run_with_error_boundary(
+        "run",
+        lambda: asyncio.run(
+            _run_command(
+                RunArguments(
+                    repo=args.repo,
+                    feature=args.feature,
+                    feature_file=args.feature_file,
+                    mode=args.mode,
+                    max_cost_usd=args.max_cost_usd,
+                    dry_run=args.dry_run,
+                    yes=args.yes,
+                    output_dir=args.output_dir,
+                ),
+                input_fn=input_fn,
+                output=output,
+            )
+        ),
+        output,
+    )
+
+
+def _run_with_error_boundary(
+    command: str,
+    action: Callable[[], int],
+    output: TerminalOutput,
+) -> int:
+    try:
+        return action()
     except CliError as error:
         safe_message = sanitize_user_facing_text(
             str(error),
             (os.environ.get("OPENAI_API_KEY", ""),),
         )
-        print_fn(f"Error: {safe_message}")
+        output.error(safe_message)
         if error.before_api_calls:
-            print_fn("Execution stopped before any API calls.")
+            output.line("Execution stopped before any API calls.")
         else:
-            print_fn("Execution stopped; no successful run was completed.")
+            output.line("Execution stopped; no successful run was completed.")
         return 2
     except ModuleNotFoundError as error:
-        if args.command != "run" or not _is_missing_agents_dependency(error):
+        if command != "run" or not _is_missing_agents_dependency(error):
             raise
-        print_fn(
-            "Error: The run command requires the 'openai-agents' package. "
-            "Install the project run dependencies before model execution."
+        output.error(
+            "The run command requires the 'openai-agents' package. Install "
+            "the project run dependencies before model execution."
         )
-        print_fn("Execution stopped before any API calls.")
+        output.line("Execution stopped before any API calls.")
         return 2
     except KeyboardInterrupt:
-        print_fn("Execution interrupted; no successful run was completed.")
+        output.line("Execution interrupted; no successful run was completed.")
         return 130
 
 
@@ -225,7 +488,7 @@ def load_prompt(filename: str) -> str:
 
 
 def _review_command(
-    args: argparse.Namespace,
+    args: ReviewArguments,
     *,
     input_fn: Callable[[str], str],
     print_fn: Callable[[str], None],
@@ -373,16 +636,16 @@ def _print_review_summary(
 
 
 async def _run_command(
-    args: argparse.Namespace,
+    args: RunArguments,
     *,
     input_fn: Callable[[str], str],
-    print_fn: Callable[[str], None],
+    output: TerminalOutput,
 ) -> int:
     from council.context import ContextBuilderError
     from council.evaluation import EvaluationError
     from council.orchestrator import CouncilOrchestrationError
 
-    feature = _read_feature_file(args.feature_file)
+    feature = _read_feature_source(args.feature, args.feature_file)
     try:
         context = build_context(args.repo, feature)
     except ContextBuilderError as error:
@@ -402,12 +665,14 @@ async def _run_command(
         specialist_model,
         synthesis_model,
         preflight,
-        print_fn,
+        output,
     )
     _enforce_cost_cap(preflight, args.max_cost_usd)
 
     if args.dry_run:
-        print_fn("Dry run complete. No API calls or run artifacts were created.")
+        output.success(
+            "Dry run complete. No API calls or run artifacts were created."
+        )
         return 0
 
     if not os.environ.get("OPENAI_API_KEY", "").strip():
@@ -416,7 +681,7 @@ async def _run_command(
             before_api_calls=True,
         )
 
-    if not args.yes and not _request_consent(input_fn, print_fn):
+    if not args.yes and not _request_consent(input_fn, output):
         raise CliError(
             "External-data consent was not granted.",
             before_api_calls=True,
@@ -469,7 +734,7 @@ async def _run_command(
         council_execution,
         generalist_execution,
         total_runtime_ms,
-        print_fn,
+        output,
     )
     return 0
 
@@ -588,38 +853,65 @@ def _print_preflight(
     specialist_model: str | None,
     synthesis_model: str,
     estimate: PreflightEstimate,
-    print_fn: Callable[[str], None],
+    output: TerminalOutput,
 ) -> None:
-    print_fn("Preflight estimate (rough; actual telemetry is authoritative)")
-    print_fn(f"Repository: {context.repository_path}")
-    print_fn(f"Branch: {context.branch or 'detached HEAD'}")
-    print_fn(f"Commit SHA: {context.commit_sha}")
-    print_fn(f"Tracked working tree dirty: {context.working_tree_dirty}")
-    print_fn(f"Selected context files: {context.selected_file_count}")
-    print_fn(f"Context characters: {context.total_text_characters}")
-    print_fn(f"Specialist model: {specialist_model or 'not used'}")
-    print_fn(f"Synthesis model: {synthesis_model}")
-    print_fn(f"Requested mode: {mode}")
-    print_fn(f"Expected nominal model calls: {estimate.expected_calls}")
-    print_fn(f"Rough estimated input tokens: {estimate.rough_input_tokens}")
-    print_fn(f"Rough output-token allowance: {estimate.output_token_allowance}")
+    output.preflight(
+        context,
+        mode,
+        specialist_model,
+        synthesis_model,
+        estimate,
+    )
+
+
+def _preflight_rows(
+    context: ContextBundle,
+    mode: str,
+    specialist_model: str | None,
+    synthesis_model: str,
+    estimate: PreflightEstimate,
+) -> tuple[tuple[str, str], ...]:
+    rows = [
+        ("Repository", context.repository_path),
+        ("Branch", context.branch or "detached HEAD"),
+        ("Commit SHA", context.commit_sha),
+        ("Tracked working tree dirty", str(context.working_tree_dirty)),
+        ("Selected context files", str(context.selected_file_count)),
+        ("Context characters", str(context.total_text_characters)),
+        ("Specialist model", specialist_model or "not used"),
+        ("Synthesis model", synthesis_model),
+        ("Requested mode", mode),
+        ("Expected nominal model calls", str(estimate.expected_calls)),
+        ("Rough estimated input tokens", str(estimate.rough_input_tokens)),
+        ("Rough output-token allowance", str(estimate.output_token_allowance)),
+    ]
     if estimate.estimated_cost_low_usd is None:
         models = ", ".join(estimate.unpriced_models) or "unknown"
-        print_fn(f"Estimated cost range USD: unavailable ({models})")
-        print_fn(f"Conservative maximum cost USD: unavailable ({models})")
+        rows.extend(
+            [
+                ("Estimated cost range USD", f"unavailable ({models})"),
+                (
+                    "Conservative maximum cost USD",
+                    f"unavailable ({models})",
+                ),
+            ]
+        )
     else:
-        print_fn(
-            "Estimated cost range USD: "
-            f"{_format_usd(estimate.estimated_cost_low_usd)}-"
-            f"{_format_usd(estimate.estimated_cost_high_usd)}"
+        rows.extend(
+            [
+                (
+                    "Estimated cost range USD",
+                    f"{_format_usd(estimate.estimated_cost_low_usd)}-"
+                    f"{_format_usd(estimate.estimated_cost_high_usd)}",
+                ),
+                (
+                    "Conservative maximum cost USD",
+                    _format_usd(estimate.conservative_max_cost_usd),
+                ),
+            ]
         )
-        print_fn(
-            "Conservative maximum cost USD: "
-            f"{_format_usd(estimate.conservative_max_cost_usd)}"
-        )
-    print_fn(
-        f"Pricing snapshot: {DEFAULT_PRICING_SNAPSHOT.identifier}"
-    )
+    rows.append(("Pricing snapshot", DEFAULT_PRICING_SNAPSHOT.identifier))
+    return tuple(rows)
 
 
 def _enforce_cost_cap(
@@ -642,6 +934,30 @@ def _enforce_cost_cap(
             f"--max-cost-usd {_format_usd(maximum)}.",
             before_api_calls=True,
         )
+
+
+def _read_feature_source(
+    feature: str | None,
+    feature_file: str | None,
+) -> str:
+    if feature is not None and feature_file is not None:
+        raise CliError(
+            "Supply exactly one feature source: --feature or --feature-file.",
+            before_api_calls=True,
+        )
+    if feature is not None:
+        if not feature.strip():
+            raise CliError(
+                "Feature input is empty.",
+                before_api_calls=True,
+            )
+        return feature
+    if feature_file is None:
+        raise CliError(
+            "Supply exactly one feature source: --feature or --feature-file.",
+            before_api_calls=True,
+        )
+    return _read_feature_file(feature_file)
 
 
 def _read_feature_file(feature_file: str) -> str:
@@ -687,9 +1003,9 @@ def _read_model_configuration(mode: str) -> tuple[str | None, str]:
 
 def _request_consent(
     input_fn: Callable[[str], str],
-    print_fn: Callable[[str], None],
+    output: TerminalOutput,
 ) -> bool:
-    print_fn(
+    output.warning(
         "Repository-derived context will be sent to the OpenAI API and may "
         "incur paid usage."
     )
@@ -781,7 +1097,7 @@ def _print_completion(
     council: CouncilExecution | None,
     generalist: GeneralistExecution | None,
     total_runtime_ms: float,
-    print_fn: Callable[[str], None],
+    output: TerminalOutput,
 ) -> None:
     council_usage = (
         council.telemetry.total_usage if council is not None else TokenUsage()
@@ -804,39 +1120,39 @@ def _print_completion(
         else None
     )
 
-    print_fn("Run complete")
-    print_fn(f"Run ID: {run_id}")
+    output.success("Run complete")
+    output.line(f"Run ID: {run_id}")
     if council is not None:
         director = council.result.director
-        print_fn(f"Director decision: {director.decision.value}")
-        print_fn(f"Confidence: {director.confidence.value}")
+        output.line(f"Director decision: {director.decision.value}")
+        output.line(f"Confidence: {director.confidence.value}")
     elif generalist is not None:
-        print_fn(f"Generalist decision: {generalist.result.decision.value}")
-        print_fn(f"Confidence: {generalist.result.confidence.value}")
-    print_fn(f"Council model calls: {council_usage.requests}")
+        output.line(f"Generalist decision: {generalist.result.decision.value}")
+        output.line(f"Confidence: {generalist.result.confidence.value}")
+    output.line(f"Council model calls: {council_usage.requests}")
     if generalist is not None:
-        print_fn(f"Generalist model calls: {generalist_usage.requests}")
-    print_fn(
+        output.line(f"Generalist model calls: {generalist_usage.requests}")
+    output.line(
         f"Actual input tokens: "
         f"{council_usage.input_tokens + generalist_usage.input_tokens}"
     )
-    print_fn(
+    output.line(
         f"Actual output tokens: "
         f"{council_usage.output_tokens + generalist_usage.output_tokens}"
     )
-    print_fn(
+    output.line(
         f"Actual total tokens: "
         f"{council_usage.total_tokens + generalist_usage.total_tokens}"
     )
-    print_fn(
+    output.line(
         "Actual estimated cost USD: "
         + (_format_usd(total_cost) if total_cost is not None else "unavailable")
     )
-    print_fn(f"Total runtime: {total_runtime_ms:.3f} ms")
-    print_fn(f"Report: {report_path}")
-    print_fn(f"Run directory: {run_directory}")
+    output.line(f"Total runtime: {total_runtime_ms:.3f} ms")
+    output.line(f"Report: {report_path}")
+    output.line(f"Run directory: {run_directory}")
     if mode == MODE_BOTH:
-        print_fn("Human comparison status: Pending")
+        output.line("Human comparison status: Pending")
 
 
 def _council_cost(execution: CouncilExecution | None) -> Decimal | None:
@@ -860,20 +1176,6 @@ def _format_usd(value: Decimal | None) -> str:
     if value is None:
         return "unavailable"
     return f"{value:.6f}"
-
-
-def _non_negative_decimal(raw_value: str) -> Decimal:
-    try:
-        value = Decimal(raw_value)
-    except InvalidOperation as error:
-        raise argparse.ArgumentTypeError(
-            "must be a non-negative decimal value"
-        ) from error
-    if not value.is_finite() or value < 0:
-        raise argparse.ArgumentTypeError(
-            "must be a non-negative decimal value"
-        )
-    return value
 
 
 def _is_within(path: Path, root: Path) -> bool:

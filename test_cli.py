@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
 from council.cli import (
+    app,
     build_preflight_estimate,
     main,
     parse_args,
@@ -33,6 +34,7 @@ from council.reporting import (
     EXPECTED_EVALUATION_ARTIFACT_FILES,
     EXPECTED_GENERALIST_ARTIFACT_FILES,
 )
+from typer.testing import CliRunner
 from test_director_agent import PRODUCER
 from test_orchestrator import DIRECTOR
 from test_producer_agent import (
@@ -61,6 +63,22 @@ STARTED_AT = datetime(2026, 8, 28, 14, 0, tzinfo=timezone.utc)
 
 
 class CliTests(unittest.TestCase):
+    def test_typer_help_exposes_run_and_review_commands(self) -> None:
+        runner = CliRunner()
+
+        cases = (
+            (["--help"], ("run", "review")),
+            (["run", "--help"], ("--repo", "--feature", "--feature-file")),
+            (["review", "--help"], ("--run", "--output-dir")),
+        )
+        for arguments, expected in cases:
+            with self.subTest(arguments=arguments):
+                result = runner.invoke(app, arguments)
+
+                self.assertEqual(result.exit_code, 0, result.output)
+                for text in expected:
+                    self.assertIn(text, result.output)
+
     def test_user_facing_sanitizer_is_complete_safe_and_idempotent(self) -> None:
         secret = MODEL_ENVIRONMENT["OPENAI_API_KEY"]
         original = (
@@ -169,6 +187,117 @@ class CliTests(unittest.TestCase):
             rendered = "\n".join(output)
             self.assertIn("Feature file does not exist", rendered)
             self.assertIn("Feature input is empty", rendered)
+
+    def test_direct_feature_reaches_context_unchanged_in_typer_dry_run(
+        self,
+    ) -> None:
+        direct_feature = "  Add a reversible shared objective.  "
+        runner = CliRunner()
+        context = self._context("/synthetic/repository")
+        council = AsyncMock()
+        generalist = AsyncMock()
+
+        with (
+            patch.dict(os.environ, MODEL_ENVIRONMENT, clear=False),
+            patch("council.cli.build_context", return_value=context) as build,
+            patch("council.cli.run_council_with_telemetry", council),
+            patch("council.cli.run_generalist", generalist),
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "run",
+                    "--repo",
+                    context.repository_path,
+                    "--feature",
+                    direct_feature,
+                    "--dry-run",
+                ],
+            )
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        build.assert_called_once_with(context.repository_path, direct_feature)
+        council.assert_not_awaited()
+        generalist.assert_not_awaited()
+        self.assertIn("Preflight estimate", result.output)
+        self.assertIn("No API calls or run artifacts were created", result.output)
+
+    def test_feature_sources_are_exclusive_and_required_before_context(
+        self,
+    ) -> None:
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            feature_file = self._feature_file(root)
+            with patch("council.cli.build_context") as build_context_mock:
+                both = runner.invoke(
+                    app,
+                    [
+                        "run",
+                        "--repo",
+                        str(root),
+                        "--feature",
+                        "Direct feature",
+                        "--feature-file",
+                        str(feature_file),
+                        "--dry-run",
+                    ],
+                )
+                neither = runner.invoke(
+                    app,
+                    ["run", "--repo", str(root), "--dry-run"],
+                )
+
+            self.assertEqual(both.exit_code, 2, both.output)
+            self.assertEqual(neither.exit_code, 2, neither.output)
+            build_context_mock.assert_not_called()
+            self.assertIn("Supply exactly one feature source", both.output)
+            self.assertIn("Supply exactly one feature source", neither.output)
+            self.assertNotIn("Traceback", both.output)
+            self.assertNotIn("Traceback", neither.output)
+
+    def test_whitespace_only_direct_feature_fails_before_context(self) -> None:
+        output: list[str] = []
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            with patch("council.cli.build_context") as build_context_mock:
+                code = main(
+                    [
+                        "run",
+                        "--repo",
+                        str(root),
+                        "--feature",
+                        " \t\n ",
+                        "--dry-run",
+                    ],
+                    print_fn=output.append,
+                )
+
+        self.assertEqual(code, 2)
+        build_context_mock.assert_not_called()
+        self.assertIn("Feature input is empty", "\n".join(output))
+
+    def test_invalid_cost_cap_is_a_clean_typer_usage_error(self) -> None:
+        runner = CliRunner()
+
+        with patch("council.cli.build_context") as build_context_mock:
+            result = runner.invoke(
+                app,
+                [
+                    "run",
+                    "--repo",
+                    "/synthetic/repository",
+                    "--feature",
+                    "Direct feature",
+                    "--max-cost-usd",
+                    "-1",
+                ],
+            )
+
+        self.assertEqual(result.exit_code, 2, result.output)
+        build_context_mock.assert_not_called()
+        self.assertIn("non-negative decimal", result.output)
+        self.assertNotIn("Traceback", result.output)
 
     def test_invalid_repository_returns_nonzero_before_api(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -539,6 +668,45 @@ class CliTests(unittest.TestCase):
         self.assertIn("[REDACTED]", captured)
         self.assertIn("SDK request failed", captured)
         self.assertNotIn("Run complete", captured)
+
+    def test_rich_error_boundary_redacts_api_key(self) -> None:
+        secret = MODEL_ENVIRONMENT["OPENAI_API_KEY"]
+        context = self._context("/synthetic/repository")
+        runner = CliRunner()
+        error = CouncilOrchestrationError(
+            f"Authorization: Bearer {secret}; repeated={secret}"
+        )
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            with (
+                patch.dict(os.environ, MODEL_ENVIRONMENT, clear=False),
+                patch("council.cli.build_context", return_value=context),
+                patch(
+                    "council.cli.run_council_with_telemetry",
+                    AsyncMock(side_effect=error),
+                ),
+            ):
+                result = runner.invoke(
+                    app,
+                    [
+                        "run",
+                        "--repo",
+                        context.repository_path,
+                        "--feature",
+                        "Direct feature",
+                        "--mode",
+                        "council",
+                        "--yes",
+                        "--output-dir",
+                        temporary_directory,
+                    ],
+                )
+
+        self.assertEqual(result.exit_code, 2, result.output)
+        self.assertNotIn(secret, result.output)
+        self.assertEqual(result.output.count("[REDACTED]"), 2)
+        self.assertIn("Authorization: Bearer [REDACTED]", result.output)
+        self.assertNotIn("Run complete", result.output)
 
     def test_real_dry_run_does_not_mutate_target_repository(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

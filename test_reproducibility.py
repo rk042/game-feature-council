@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from council.cli import parse_args
+from council.cli import app, parse_args
 from council.execution import execute_agent
 from council.tracing import build_agents_run_config
 
@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parent
 README_PATH = ROOT / "README.md"
 FEATURE_EXAMPLE_PATH = ROOT / "examples" / "feature.txt"
 PYPROJECT_PATH = ROOT / "pyproject.toml"
+MODULE_ENTRY_PATH = ROOT / "council" / "__main__.py"
 APPROVED_EXECUTION_PATH = Path("council/execution.py")
 SMOKE_SCRIPT_PATHS = (
     Path("test_agent.py"),
@@ -44,7 +45,17 @@ class ReproducibilityTests(unittest.IsolatedAsyncioTestCase):
             {
                 "openai-agents==0.22.0",
                 "pydantic==2.13.4",
+                "rich==15.0.0",
+                "typer==0.27.1",
             },
+        )
+        self.assertEqual(
+            project["scripts"],
+            {"council": "council.cli:console_main"},
+        )
+        self.assertIn(
+            "from council.cli import console_main",
+            MODULE_ENTRY_PATH.read_text(encoding="utf-8"),
         )
         self.assertFalse(
             any(
@@ -86,11 +97,13 @@ class ReproducibilityTests(unittest.IsolatedAsyncioTestCase):
             "py -3.12 -m venv .venv",
             r".\.venv\Scripts\Activate.ps1",
             "python -m pip install -e .",
+            "council --help",
             r".\.venv\Scripts\python.exe -m council --help",
             r'$env:OPENAI_API_KEY = "..."',
             r'$env:COUNCIL_SPECIALIST_MODEL = "gpt-5.4-nano"',
             r'$env:COUNCIL_SYNTHESIS_MODEL = "gpt-5.4-nano"',
             r'--feature-file ".\examples\feature.txt"',
+            '--feature "Add a new gameplay mode while reusing the existing progression system."',
             "--mode both",
             "--dry-run",
             "-m council review --run <run-id>",
@@ -115,6 +128,7 @@ class ReproducibilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(parsed.command, "run")
         self.assertEqual(parsed.mode, "both")
         self.assertTrue(parsed.dry_run)
+        self.assertEqual(app.info.name, "council")
 
     async def test_default_runner_config_disables_tracing_explicitly(
         self,

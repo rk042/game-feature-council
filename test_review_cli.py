@@ -451,7 +451,7 @@ class ReviewCliTests(unittest.TestCase):
                     )
                     captured = completed.stdout + completed.stderr
                     self.assertEqual(completed.returncode, 0, captured)
-                    self.assertIn("usage:", captured)
+                    self.assertIn("Usage:", captured)
                     self.assertNotIn("Traceback", captured)
                     self.assertFalse(import_marker.exists())
 
