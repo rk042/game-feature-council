@@ -74,47 +74,70 @@ def render_html_report(
 ) -> str:
     result = record.council_result
     director = result.director
+    evidence_resolver = evidence_resolver or result.evidence_resolver
     mode = "Council + Generalist" if comparison is not None else "Council"
     roles = dict(record.telemetry.roles)
     if comparison is not None:
         roles["generalist"] = comparison.generalist.telemetry
 
     sections = [
-        ("executive", "Executive Summary"),
-        ("decision", "Council Decision"),
-        ("workflow", "Experiment Workflow"),
+        ("what-you-asked", "What You Asked"),
+        ("recommendation", "Recommendation"),
+        ("what-we-have", "What We Already Have"),
+        ("what-is-open", "What Is Still Open"),
+        ("recommended-mvp", "Recommended MVP"),
+        ("not-building", "Not Building Yet"),
+        ("what-we-learn", "What We Will Learn"),
+        ("success-looks-like", "What Success Looks Like"),
+        ("effort-estimation", "Effort & Estimation"),
+        ("what-happens-next", "What Happens Next"),
+        ("detailed-analysis", "Detailed Council Analysis"),
+        ("feature-refinement", "Feature Refinement"),
+        ("evidence", "Repository Findings"),
         ("specialists", "Specialist Findings"),
+        ("risks", "Evidence Resolution"),
         ("producer", "Producer Synthesis"),
+        ("decision", "Director Decision"),
+        ("workflow", "Experiment Workflow"),
     ]
-    if feature_refinement is not None:
-        sections.insert(1, ("feature-refinement", "Feature Refinement"))
     if comparison is not None:
         sections.append(("comparison", "Generalist Comparison"))
     sections.extend(
         [
-            ("metrics", "Metrics & Charts"),
-            ("risks", "Risks & Unknowns"),
-            ("evidence", "Repository Evidence"),
+            ("metrics", "Cost & Performance"),
+            ("technical-audit", "Technical Audit"),
             ("human-review", "Human Review"),
         ]
     )
-    if evidence_resolver is not None:
+    if feature_refinement is None:
+        sections = [item for item in sections if item[0] != "feature-refinement"]
+    if evidence_resolver is None:
         sections = [
-            (section_id, "Evidence Resolution" if section_id == "risks" else label)
+            (section_id, "Risks & Unknowns" if section_id == "risks" else label)
             for section_id, label in sections
         ]
 
     body = "".join(
         [
             _header(
-                run_id=record.run_id,
-                started_at=record.telemetry.started_at.isoformat(),
                 mode=mode,
             ),
             _ai_disclaimer(),
-            _council_executive(record, comparison, feature_refinement),
-            _feature_repository(record.feature_input, result.context),
+            _council_decision_brief(
+                record,
+                evidence_resolver=evidence_resolver,
+                feature_refinement=feature_refinement,
+            ),
+            _detailed_analysis_divider(),
             _feature_refinement_section(feature_refinement),
+            _evidence_section(result.context, _specialist_mapping(record)),
+            _specialists_section(record),
+            (
+                _evidence_resolution_section(evidence_resolver)
+                if evidence_resolver is not None
+                else _risks_section(risks_and_unknowns)
+            ),
+            _producer_section(record),
             _director_section(
                 director,
                 record.telemetry.roles.get("director"),
@@ -125,13 +148,12 @@ def render_html_report(
                 director,
                 include_generalist=comparison is not None,
             ),
-            _specialists_section(record),
-            _producer_section(record),
             (
                 _comparison_section(record, comparison)
                 if comparison is not None
                 else ""
             ),
+            _council_executive(record, comparison, feature_refinement),
             _metrics_section(
                 roles,
                 pricing_snapshot_ids={
@@ -148,12 +170,7 @@ def render_html_report(
                     ),
                 },
             ),
-            (
-                _evidence_resolution_section(evidence_resolver)
-                if evidence_resolver is not None
-                else _risks_section(risks_and_unknowns)
-            ),
-            _evidence_section(result.context, _specialist_mapping(record)),
+            _technical_audit_section(record),
             _human_review_section(record, comparison),
             _footer(record.pricing_snapshot_id),
         ]
@@ -184,7 +201,7 @@ def render_generalist_html_report(
         sections.insert(1, ("feature-refinement", "Feature Refinement"))
     body = "".join(
         [
-            _header(run_id=run_id, started_at=started_at, mode="Generalist"),
+            _header(mode="Generalist"),
             _ai_disclaimer(),
             _generalist_executive(execution, feature_refinement),
             _feature_repository(feature_input, context),
@@ -221,7 +238,7 @@ def _document(
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Game Feature Council - {_h(run_id)}</title>
-  <style>{_CSS}</style>
+  <style>{_CSS}{_BRIEF_CSS}</style>
 </head>
 <body>
   <div class="shell">
@@ -236,16 +253,12 @@ def _document(
 """
 
 
-def _header(*, run_id: str, started_at: str, mode: str) -> str:
+def _header(*, mode: str) -> str:
     return f"""
 <header class="hero">
   <p class="eyebrow">Repository-grounded feature evaluation</p>
   <h1>Game Feature Council</h1>
-  <div class="run-meta">
-    <span><b>Run ID</b> {_h(run_id)}</span>
-    <span><b>Started</b> {_h(started_at)}</span>
-    <span><b>Mode</b> {_h(mode)}</span>
-  </div>
+  <p class="run-meta"><b>Evaluation mode</b> {_h(mode)}</p>
 </header>
 """
 
@@ -378,7 +391,11 @@ def _council_executive(
                     ("Usage", "Incomplete"),
                 ]
             )
-    return _metric_section(metrics)
+    return _metric_section(
+        metrics,
+        section_id="cost-summary",
+        heading="Run Cost Summary",
+    )
 
 
 def _generalist_executive(
@@ -451,13 +468,18 @@ def _generalist_executive(
     return _metric_section(metrics)
 
 
-def _metric_section(metrics: Iterable[tuple[str, str]]) -> str:
+def _metric_section(
+    metrics: Iterable[tuple[str, str]],
+    *,
+    section_id: str = "executive",
+    heading: str = "Executive Summary",
+) -> str:
     cards = "".join(
         f'<article class="metric"><span>{_h(label)}</span><strong>{_h(value)}</strong></article>'
         for label, value in metrics
         if value
     )
-    return f'<section id="executive"><h2>Executive Summary</h2><div class="metric-grid">{cards}</div></section>'
+    return f'<section id="{_h(section_id)}"><h2>{_h(heading)}</h2><div class="metric-grid">{cards}</div></section>'
 
 
 def _feature_repository(feature: str, context: ContextBundle) -> str:
@@ -478,6 +500,243 @@ def _feature_repository(feature: str, context: ContextBundle) -> str:
       <dt>Selected evidence</dt><dd>{evidence_count}</dd>
     </dl>
   </div>
+</section>
+"""
+
+
+def _council_decision_brief(
+    record: RunRecord,
+    *,
+    evidence_resolver: EvidenceResolverRecord | None,
+    feature_refinement: FeatureRefinementRecord | None,
+) -> str:
+    """Render a deterministic, non-technical first layer from persisted fields."""
+    director = record.council_result.director
+    experiment = director.experiment
+    original_feature = (
+        feature_refinement.original_feature
+        if feature_refinement is not None
+        else record.feature_input
+    )
+    approved_feature = (
+        feature_refinement.approved_refined_feature
+        if feature_refinement is not None and feature_refinement.approved
+        else None
+    )
+    approved = (
+        f"<details><summary>Approved AI interpretation</summary>"
+        f"<p class=\"prewrap\">{_h(approved_feature)}</p></details>"
+        if approved_feature and approved_feature != original_feature
+        else ""
+    )
+    rationale = director.rationale[:3] or [director.confidence_reason]
+    learning = [
+        experiment.behavioural_question,
+        experiment.riskiest_assumption,
+        *(case.observed_pattern for case in experiment.learning_cases[:3]),
+    ]
+    status, status_note = _brief_status(director, evidence_resolver)
+    return f"""
+<section id="what-you-asked" class="decision-brief identity-brief">
+  <div class="section-heading"><div><p class="eyebrow">MVP decision brief</p><h2>What You Asked</h2></div></div>
+  <p class="prewrap">{_h(original_feature)}</p>
+  <p class="section-note">Repository: {_h(_repository_name(record.council_result.context.repository_path))}</p>
+  {approved}
+</section>
+<section id="recommendation" class="decision-brief recommendation-brief">
+  <p class="eyebrow">Recommendation</p>
+  <div class="decision-value">{_h(_friendly_decision(director.decision.value))}</div>
+  <div class="brief-status"><strong>{_h(status)}</strong><span>{_h(status_note)}</span></div>
+  {_text_list(rationale)}
+</section>
+<section id="what-we-have" class="decision-brief">
+  <h2>What We Already Have</h2>
+  <p class="section-note">Repository-grounded capabilities from the supplied evidence.</p>
+  {_brief_capabilities(record, evidence_resolver)}
+</section>
+<section id="what-is-open" class="decision-brief">
+  <h2>What Is Still Open</h2>
+  <p class="section-note">Only consolidated Evidence Resolver concerns are shown here.</p>
+  {_brief_open_concerns(evidence_resolver)}
+</section>
+<section id="recommended-mvp" class="decision-brief">
+  <h2>Recommended MVP</h2>
+  <div class="two-column"><div class="card"><h3>Smallest experiment</h3><p>{_h(experiment.smallest_experiment)}</p></div><div class="card"><h3>Build for this experiment</h3>{_text_list(experiment.build[:4])}</div></div>
+</section>
+<section id="not-building" class="decision-brief">
+  <h2>Not Building Yet</h2>{_text_list(experiment.do_not_build[:5])}
+</section>
+<section id="what-we-learn" class="decision-brief">
+  <h2>What We Will Learn</h2>{_text_list(learning[:5])}
+</section>
+<section id="success-looks-like" class="decision-brief">
+  <h2>What Success Looks Like</h2>{_text_list(experiment.success_metrics[:5])}
+  {f'<p class="section-note">Threshold notes: {_h("; ".join(experiment.decision_threshold_notes))}</p>' if experiment.decision_threshold_notes else '<p class="section-note">Success thresholds: To be defined from the persisted experiment design.</p>'}
+</section>
+{_brief_effort(director, evidence_resolver)}
+{_brief_next_steps(director)}
+"""
+
+
+def _detailed_analysis_divider() -> str:
+    return """
+<section id="detailed-analysis" class="detail-divider">
+  <p class="eyebrow">Detailed Council Analysis</p>
+  <h2>Everything below is supporting detail, evidence, and audit context.</h2>
+</section>
+"""
+
+
+def _repository_name(repository_path: str) -> str:
+    normalized = repository_path.rstrip("/\\")
+    return normalized.replace("\\", "/").rsplit("/", maxsplit=1)[-1] or repository_path
+
+
+def _friendly_decision(value: str) -> str:
+    return value.replace("_", " ")
+
+
+def _brief_status(
+    director: DirectorResult,
+    resolver: EvidenceResolverRecord | None,
+) -> tuple[str, str]:
+    if resolver is not None and any(
+        concern.status == ResolutionStatus.HUMAN_PRODUCT_DECISION
+        for concern in resolver.concerns
+    ):
+        return "Decision needed", "A persisted product decision is needed before the next step."
+    if director.decision.value == "PROTOTYPE_FIRST":
+        return "Enough to prototype", "The current evidence supports a bounded learning step."
+    if director.decision.value in {"GO", "GO_WITH_REDUCED_SCOPE"}:
+        return "Ready for next step", "The recommendation identifies a concrete next action."
+    return "Needs investigation first", "The current evidence is not sufficient for a dependable build decision."
+
+
+def _brief_capabilities(
+    record: RunRecord,
+    resolver: EvidenceResolverRecord | None,
+) -> str:
+    items = []
+    if resolver is not None:
+        for concern in resolver.concerns:
+            if concern.status != ResolutionStatus.RESOLVED_FROM_REPOSITORY:
+                continue
+            items.append(
+                f"<article class=\"card\"><h3>{_h(concern.canonical_concern)}</h3>"
+                f"<p>{_h(concern.resolution or '')}</p>{_evidence_chips(concern.evidence_ids)}</article>"
+            )
+            if len(items) == 5:
+                return '<div class="three-column">' + "".join(items) + "</div>"
+    for specialist in _specialist_mapping(record).values():
+        for evidence in specialist.evidence:
+            if evidence.source_type.value != "repository":
+                continue
+            location = " ".join(value for value in (evidence.file_path, evidence.symbol) if value)
+            items.append(
+                f"<article class=\"card\"><h3>{_h(evidence.claim)}</h3><p>{_h(evidence.reason_it_matters)}</p>"
+                f"<small>{_h(location)}</small></article>"
+            )
+            if len(items) == 5:
+                return '<div class="three-column">' + "".join(items) + "</div>"
+    if not items:
+        return _not_available()
+    return '<div class="three-column">' + "".join(items) + "</div>"
+
+
+def _brief_open_concerns(resolver: EvidenceResolverRecord | None) -> str:
+    if resolver is None:
+        return '<p class="not-available">No consolidated evidence-resolution record is available for this run.</p>'
+    open_statuses = {
+        ResolutionStatus.REQUIRES_EXPERIMENT,
+        ResolutionStatus.HUMAN_PRODUCT_DECISION,
+        ResolutionStatus.HUMAN_REPOSITORY_HELP,
+    }
+    cards = []
+    for concern in resolver.concerns:
+        if concern.status not in open_statuses:
+            continue
+        explanation = (
+            concern.why_unresolved
+            or concern.residual_risk
+            or concern.human_question
+            or concern.how_to_answer
+            or "Not specified"
+        )
+        cards.append(
+            f"<article class=\"card\"><h3>{_h(concern.canonical_concern)}</h3>"
+            f"<p>{_h(explanation)}</p></article>"
+        )
+        if len(cards) == 5:
+            break
+    return '<div class="three-column">' + "".join(cards) + "</div>" if cards else _not_available()
+
+
+def _brief_effort(
+    director: DirectorResult,
+    resolver: EvidenceResolverRecord | None,
+) -> str:
+    effort = director.effort
+    if effort.developer_days_min is None and effort.developer_days_max is None:
+        missing = _brief_missing_estimate_information(resolver)
+        return f"""
+<section id="effort-estimation" class="decision-brief">
+  <h2>Effort &amp; Estimation</h2><div class="card"><h3>Full feature estimate</h3><p><strong>Not reliable yet</strong></p><p>{_h(effort.basis)}</p>{missing}</div>
+</section>"""
+    return f"""
+<section id="effort-estimation" class="decision-brief">
+  <h2>Effort &amp; Estimation</h2><div class="card"><h3>Grounded implementation range</h3><p><strong>{_h(_effort(effort.developer_days_min, effort.developer_days_max))}</strong></p><p>{_h(effort.basis)}</p></div>
+</section>"""
+
+
+def _brief_missing_estimate_information(resolver: EvidenceResolverRecord | None) -> str:
+    if resolver is None:
+        return ""
+    values = [
+        concern.how_to_answer or concern.human_question
+        for concern in resolver.concerns
+        if concern.status in {
+            ResolutionStatus.HUMAN_REPOSITORY_HELP,
+            ResolutionStatus.REQUIRES_EXPERIMENT,
+        }
+        and (concern.how_to_answer or concern.human_question)
+    ]
+    return f"<p><b>What is needed before estimating:</b> {_h(values[0])}</p>" if values else ""
+
+
+def _brief_next_steps(director: DirectorResult) -> str:
+    conditions = director.decision_conditions
+    cards = (
+        ("Scale", "If the experiment shows the expected value.", conditions.scale),
+        ("Iterate", "If the experiment is useful but needs change.", conditions.iterate),
+        ("Kill", "If valid evidence shows the hypothesis is harmful or ineffective.", conditions.kill),
+        ("Need more data", "If the experiment cannot be interpreted reliably.", conditions.need_more_data),
+    )
+    content = "".join(
+        f"<article class=\"card\"><h3>{_h(label)}</h3><p>{_h(description)}</p>{_text_list(values)}</article>"
+        for label, description, values in cards
+    )
+    return f'<section id="what-happens-next" class="decision-brief"><h2>What Happens Next</h2><div class="condition-grid">{content}</div></section>'
+
+
+def _technical_audit_section(record: RunRecord) -> str:
+    context = record.council_result.context
+    return f"""
+<section id="technical-audit">
+  <h2>Technical Audit Details</h2>
+  <p class="section-note">Persisted identity and reproducibility context. This is audit data, not a new finding.</p>
+  <details><summary>Run and repository identity</summary><div class="card"><dl class="facts">
+    <dt>Run ID</dt><dd>{_h(record.run_id)}</dd>
+    <dt>Started</dt><dd>{_h(record.telemetry.started_at.isoformat())}</dd>
+    <dt>Repository path</dt><dd>{_h(context.repository_path)}</dd>
+    <dt>Branch</dt><dd>{_h(context.branch or 'detached HEAD')}</dd>
+    <dt>Commit SHA</dt><dd><code>{_h(context.commit_sha)}</code></dd>
+    <dt>Tracked working tree dirty</dt><dd>{_h(str(context.working_tree_dirty))}</dd>
+    <dt>Context evidence count</dt><dd>{len(context.evidence)}</dd>
+    <dt>Context configuration</dt><dd><code>{_h(context.configuration.model_dump_json())}</code></dd>
+    <dt>Pricing snapshot</dt><dd>{_h(record.pricing_snapshot_id)}</dd>
+    <dt>Models</dt><dd>{_h(', '.join(sorted({item.model for item in record.telemetry.roles.values()})))}</dd>
+    <dt>Evidence manifest</dt><dd>{_h(', '.join(f'{item.id}: {item.file_path}' for item in context.evidence) or 'None')}</dd>
+  </dl></div></details>
 </section>
 """
 
@@ -896,14 +1155,16 @@ def _metrics_section(
     )
     return f"""
 <section id="metrics">
-  <h2>Metrics &amp; Charts</h2>
+  <h2>Cost &amp; Performance</h2>
+  <p class="section-note">The run cost summary above keeps totals visible; role details remain available for audit.</p>
+  <details><summary>Role details and charts</summary>
   <p class="section-note">Charts use persisted completed-call telemetry. Durations are shown by role; no relative execution start positions are inferred.</p>
   <div class="chart-grid">{token_chart}{duration_chart}{cost_chart}</div>
   <div class="table-wrap"><table>
     <thead><tr><th>Role</th><th>Model</th><th>Duration</th><th>Input Tokens</th><th>Output Tokens</th><th>Total Tokens</th><th>Estimated Cost</th></tr></thead>
     <tbody>{''.join(rows)}</tbody>
     <tfoot><tr><th>Role totals</th><td>&mdash;</td><td>Not summed</td><td>{total_input:,}</td><td>{total_output:,}</td><td>{total_tokens:,}</td><td>{_h(total_cost_text)}</td></tr></tfoot>
-  </table></div>
+  </table></div></details>
 </section>
 """
 
@@ -1322,4 +1583,8 @@ _CSS = r"""
 @media(max-width:900px){.shell{display:block}.sidebar{position:static;width:auto;height:auto;border-right:0;border-bottom:1px solid var(--border)}.brand-mark{display:none}.sidebar nav{flex-direction:row;overflow-x:auto;margin:0}.sidebar a{white-space:nowrap}main{padding:24px 16px}.condition-grid,.flow-grid,.three-column{grid-template-columns:repeat(2,minmax(0,1fr))}.radar-layout{grid-template-columns:1fr}}
 @media(max-width:600px){.context-strip,.two-column,.three-column,.condition-grid,.flow-grid{grid-template-columns:1fr}section{padding:20px}.facts{grid-template-columns:1fr}.facts dd{margin-bottom:7px}}
 @media print{:root{color-scheme:light}body{background:#fff;color:#111;font-size:11pt}.shell{display:block;max-width:none}.sidebar{display:none}main{padding:0}.hero,section,.ai-disclaimer,.card,.role-card,.chart-card,.evidence-card,.evidence-item,.pending-card{break-inside:avoid;background:#fff;color:#111;box-shadow:none;border-color:#888}.section-note,.run-meta,.role-card header span,footer{color:#444}.bar-track{border:1px solid #777;background:#eee}.chips code,.evidence-card code{color:#111;background:#eee}.ai-disclaimer{border-color:#9a6817}.decision-panel{background:#fff}.architecture,.architecture *{border-color:#888}a{color:#111}}
+"""
+
+_BRIEF_CSS = r"""
+.decision-brief{background:linear-gradient(145deg,#12233a,#0d192a 70%)}.identity-brief{border-color:#3b638d}.recommendation-brief{background:linear-gradient(145deg,#133626,#0e1d26 70%);border-color:#4b7d67}.brief-status{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin:14px 0;padding:10px 13px;border-left:3px solid var(--green);border-radius:8px;background:#10251f}.brief-status span{color:var(--muted)}.detail-divider{margin-top:52px;background:linear-gradient(145deg,#172237,#101b2c);border-style:dashed}.detail-divider h2{margin-bottom:0;font-size:1.25rem;color:var(--muted)}#what-we-have .card h3,#what-is-open .card h3{font-size:1rem}.decision-brief .condition-grid{grid-template-columns:repeat(2,minmax(0,1fr))}@media(max-width:600px){.decision-brief .condition-grid{grid-template-columns:1fr}}
 """

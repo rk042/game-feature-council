@@ -25,6 +25,7 @@ from council.models import (
 from council.orchestrator import (
     AgentCallResult,
     CouncilOrchestrationError,
+    render_evidence_resolver_input,
     render_specialist_input,
     run_council,
     run_council_with_telemetry,
@@ -32,6 +33,7 @@ from council.orchestrator import (
     validate_producer_evidence,
     validate_specialist_evidence,
 )
+from council.evidence_resolver import collect_source_concerns
 from test_director_agent import PRODUCER
 from test_producer_agent import (
     ANALYTICS,
@@ -435,6 +437,154 @@ class OrchestratorTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("producer", calls)
         self.assertNotIn("director", calls)
 
+    async def test_resolver_rejects_fabricated_descriptive_source_id(self) -> None:
+        calls: list[str] = []
+        invalid = EvidenceResolverResult(
+            concerns=[
+                ResolvedConcern(
+                    concern_id="resolver-001",
+                    kind="unknown",
+                    canonical_concern="Unmapped activation concern",
+                    source_concern_ids=["game-design-unknown-activation"],
+                    status=ResolutionStatus.HUMAN_REPOSITORY_HELP,
+                    why_unresolved="The supplied concerns do not establish activation behaviour.",
+                    human_question="Which tracked source owns activation?",
+                )
+            ]
+        )
+
+        async def execute(agent: str, _input_text: str):
+            calls.append(agent)
+            return invalid if agent == "resolver_pass_1" else OUTPUTS[agent]
+
+        with self._patched_agent_factories(), patch.object(
+            orchestrator_module,
+            "bounded_targeted_lookup",
+        ) as lookup:
+            with self.assertRaisesRegex(
+                CouncilOrchestrationError,
+                "Unknown ID:\\ngame-design-unknown-activation",
+            ) as raised:
+                await run_council(FEATURE, self._context(), execute)
+
+        lookup.assert_not_called()
+        self.assertIn("preserve evidence provenance", str(raised.exception))
+        self.assertNotIn("producer", calls)
+        self.assertNotIn("director", calls)
+
+    async def test_resolver_rejects_fabricated_numeric_lookup_id(self) -> None:
+        calls: list[str] = []
+        invalid = EvidenceResolverResult(
+            lookup_requests=[
+                EvidenceLookupRequest(
+                    concern_ids=["game-design-999"],
+                    search_terms=["activation"],
+                )
+            ]
+        )
+
+        async def execute(agent: str, _input_text: str):
+            calls.append(agent)
+            return invalid if agent == "resolver_pass_1" else OUTPUTS[agent]
+
+        with self._patched_agent_factories():
+            with self.assertRaisesRegex(
+                CouncilOrchestrationError,
+                "Unknown ID:\\ngame-design-999",
+            ):
+                await run_council(FEATURE, self._context(), execute)
+
+        self.assertEqual(calls.count("resolver_pass_1"), 1)
+        self.assertNotIn("producer", calls)
+        self.assertNotIn("director", calls)
+
+    async def test_valid_consolidated_source_ids_proceed_unchanged(self) -> None:
+        calls: list[str] = []
+        source_ids = [
+            "game-design-003",
+            "technical-002",
+            "analytics-004",
+            "scope-risk-003",
+        ]
+        game_design = GAME_DESIGN.model_copy(
+            update={"risks": ["r1", "r2"], "unknowns": ["u3"]}
+        )
+        technical = TECHNICAL.model_copy(
+            update={"risks": ["r1"], "unknowns": ["u2"]}
+        )
+        analytics = ANALYTICS.model_copy(
+            update={"risks": ["r1", "r2", "r3"], "unknowns": ["u4"]}
+        )
+        scope_risk = SCOPE_RISK.model_copy(
+            update={"risks": ["r1", "r2"], "unknowns": ["u3"]}
+        )
+        original_sources = collect_source_concerns(
+            game_design, technical, analytics, scope_risk
+        )
+        resolver = EvidenceResolverResult(
+            concerns=[
+                ResolvedConcern(
+                    concern_id="resolver-001",
+                    kind="unknown",
+                    canonical_concern="Consolidated concern",
+                    source_concern_ids=source_ids,
+                    status=ResolutionStatus.REQUIRES_EXPERIMENT,
+                    why_unresolved="It requires observed player behaviour.",
+                    how_to_answer="Run the bounded experiment.",
+                )
+            ]
+        )
+
+        async def execute(agent: str, _input_text: str):
+            calls.append(agent)
+            outputs = {
+                "game_design": game_design,
+                "technical": technical,
+                "analytics": analytics,
+                "scope_risk": scope_risk,
+                "resolver_pass_1": resolver,
+                "producer": PRODUCER,
+                "director": DIRECTOR,
+            }
+            return outputs[agent]
+
+        with self._patched_agent_factories():
+            result = await run_council(FEATURE, self._context(), execute)
+
+        self.assertEqual(result.evidence_resolver.concerns[0].source_concern_ids, source_ids)
+        self.assertEqual(result.evidence_resolver.source_concerns, original_sources)
+        self.assertIn("producer", calls)
+        self.assertIn("director", calls)
+
+    def test_resolver_input_exposes_the_exact_opaque_source_id_registry(self) -> None:
+        concerns = collect_source_concerns(
+            GAME_DESIGN, TECHNICAL, ANALYTICS, SCOPE_RISK
+        )
+        rendered = render_evidence_resolver_input(
+            FEATURE,
+            self._context(),
+            concerns,
+            GAME_DESIGN,
+            TECHNICAL,
+            ANALYTICS,
+            SCOPE_RISK,
+        )
+
+        self.assertIn("ALLOWED SOURCE CONCERN IDS (OPAQUE IDENTIFIERS)", rendered)
+        self.assertIn("Copy only exact IDs from this registry", rendered)
+        self.assertIn("Never invent or transform an ID", rendered)
+        for concern in concerns:
+            self.assertIn(concern.id, rendered)
+
+    def test_resolver_prompt_marks_source_ids_as_opaque(self) -> None:
+        prompt = Path("prompts/evidence_resolver.md").read_text(encoding="utf-8")
+
+        self.assertIn("SOURCE CONCERN IDS ARE OPAQUE IDENTIFIERS", prompt)
+        self.assertIn("Copy only exact IDs supplied", prompt)
+        self.assertIn("Never invent, transform", prompt)
+        self.assertIn("Repository lookup always", prompt)
+        self.assertIn("comes before asking a human for repository help", prompt)
+
     async def test_lookup_runs_second_resolver_pass_before_producer(self) -> None:
         calls: list[str] = []
         inputs: dict[str, list[str]] = {}
@@ -500,6 +650,251 @@ class OrchestratorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.context, original_context)
         self.assertEqual(result.producer.evidence_ids, ["repo-001", "resolver-repo-001"])
         self.assertEqual(result.director.evidence_ids, ["resolver-repo-001"])
+
+    async def test_premature_repository_help_enforces_lookup_and_second_pass(self) -> None:
+        calls: list[str] = []
+        progress_events = []
+        pass_one = EvidenceResolverResult(
+            concerns=[self._human_repository_concern("resolver-001", ["technical-001"])]
+        )
+        pass_two = EvidenceResolverResult(
+            concerns=[
+                ResolvedConcern(
+                    concern_id="resolver-001",
+                    kind="unknown",
+                    canonical_concern="Repository ownership",
+                    source_concern_ids=["technical-001"],
+                    status=ResolutionStatus.RESOLVED_FROM_REPOSITORY,
+                    resolution="Supplemental evidence identifies the owner.",
+                    evidence_ids=["resolver-repo-001"],
+                )
+            ]
+        )
+        supplemental = SupplementalRepositoryEvidence(
+            id="resolver-repo-001",
+            file_path="src/Owner.cs",
+            matched_terms=["ownership"],
+            text="owner",
+            truncated=False,
+        )
+
+        async def execute(agent: str, _input_text: str):
+            calls.append(agent)
+            if agent == "resolver_pass_1":
+                return pass_one if calls.count(agent) == 1 else pass_two
+            if agent == "producer":
+                return PRODUCER.model_copy(update={"evidence_ids": ["resolver-repo-001"]})
+            if agent == "director":
+                return DIRECTOR.model_copy(update={"evidence_ids": ["resolver-repo-001"]})
+            return OUTPUTS[agent]
+
+        with self._patched_agent_factories(), patch.object(
+            orchestrator_module,
+            "bounded_targeted_lookup",
+            return_value=([supplemental], []),
+        ) as lookup:
+            result = await run_council(
+                FEATURE,
+                self._context(),
+                execute,
+                progress_listener=progress_events.append,
+            )
+
+        requests = lookup.call_args.args[1]
+        self.assertEqual(calls.count("resolver_pass_1"), 2)
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(requests[0].concern_ids, ["technical-001"])
+        self.assertEqual(result.evidence_resolver.lookup_requests, requests)
+        self.assertTrue(
+            any(
+                event.role == "evidence_lookup"
+                and event.message
+                == "Workflow enforced repository lookup before human repository help."
+                for event in progress_events
+            )
+        )
+
+    async def test_existing_repository_help_lookup_is_not_duplicated(self) -> None:
+        calls: list[str] = []
+        request = EvidenceLookupRequest(
+            concern_ids=["technical-001"],
+            search_terms=["persistence"],
+        )
+        pass_one = EvidenceResolverResult(
+            concerns=[self._human_repository_concern("resolver-001", ["technical-001"])],
+            lookup_requests=[request],
+        )
+        pass_two = EvidenceResolverResult(
+            concerns=[self._human_repository_concern("resolver-001", ["technical-001"])]
+        )
+
+        async def execute(agent: str, _input_text: str):
+            calls.append(agent)
+            if agent == "resolver_pass_1":
+                return pass_one if calls.count(agent) == 1 else pass_two
+            return OUTPUTS[agent]
+
+        with self._patched_agent_factories(), patch.object(
+            orchestrator_module,
+            "bounded_targeted_lookup",
+            return_value=([], ["No tracked file matched."]),
+        ) as lookup:
+            result = await run_council(FEATURE, self._context(), execute)
+
+        self.assertEqual(lookup.call_args.args[1], [request])
+        self.assertEqual(result.evidence_resolver.lookup_requests, [request])
+        self.assertEqual(result.evidence_resolver.concerns[0].status, ResolutionStatus.HUMAN_REPOSITORY_HELP)
+
+    async def test_multiple_premature_repository_help_concerns_merge_bounded_lookup(self) -> None:
+        calls: list[str] = []
+        pass_one = EvidenceResolverResult(
+            concerns=[
+                self._human_repository_concern("resolver-001", ["game-design-001", "technical-001"]),
+                self._human_repository_concern("resolver-002", ["analytics-001", "scope-risk-001"]),
+            ]
+        )
+        pass_two = EvidenceResolverResult(
+            concerns=[
+                self._human_repository_concern("resolver-001", ["game-design-001", "technical-001"]),
+                self._human_repository_concern("resolver-002", ["analytics-001", "scope-risk-001"]),
+            ]
+        )
+
+        async def execute(agent: str, _input_text: str):
+            calls.append(agent)
+            if agent == "resolver_pass_1":
+                return pass_one if calls.count(agent) == 1 else pass_two
+            return OUTPUTS[agent]
+
+        with self._patched_agent_factories(), patch.object(
+            orchestrator_module,
+            "bounded_targeted_lookup",
+            return_value=([], ["No tracked file matched."]),
+        ) as lookup:
+            result = await run_council(FEATURE, self._context(), execute)
+
+        requests = lookup.call_args.args[1]
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(
+            requests[0].concern_ids,
+            ["game-design-001", "technical-001", "analytics-001", "scope-risk-001"],
+        )
+        self.assertLessEqual(len(requests[0].search_terms), 5)
+        self.assertEqual(result.evidence_resolver.lookup_requests, requests)
+
+    async def test_enforced_lookup_stays_within_saturated_request_limit(self) -> None:
+        calls: list[str] = []
+        existing = [
+            EvidenceLookupRequest(
+                concern_ids=[source_id],
+                search_terms=[term],
+            )
+            for source_id, term in (
+                ("game-design-001", "design"),
+                ("technical-001", "persistence"),
+                ("scope-risk-001", "scope"),
+            )
+        ]
+        pass_one = EvidenceResolverResult(
+            concerns=[self._human_repository_concern("resolver-001", ["analytics-001"])],
+            lookup_requests=existing,
+        )
+        pass_two = EvidenceResolverResult(
+            concerns=[self._human_repository_concern("resolver-001", ["analytics-001"])]
+        )
+
+        async def execute(agent: str, _input_text: str):
+            calls.append(agent)
+            if agent == "resolver_pass_1":
+                return pass_one if calls.count(agent) == 1 else pass_two
+            return OUTPUTS[agent]
+
+        with self._patched_agent_factories(), patch.object(
+            orchestrator_module,
+            "bounded_targeted_lookup",
+            return_value=([], ["No tracked file matched."]),
+        ) as lookup:
+            result = await run_council(FEATURE, self._context(), execute)
+
+        requests = lookup.call_args.args[1]
+        self.assertEqual(len(requests), 3)
+        self.assertEqual(requests[:2], existing[:2])
+        self.assertEqual(
+            requests[2].concern_ids,
+            ["scope-risk-001", "analytics-001"],
+        )
+        self.assertIn("scope", requests[2].search_terms)
+        self.assertLessEqual(len(requests[2].search_terms), 5)
+        self.assertEqual(result.evidence_resolver.lookup_requests, requests)
+
+    async def test_final_repository_help_requires_lookup_for_that_concern(self) -> None:
+        calls: list[str] = []
+        pass_one = EvidenceResolverResult(
+            concerns=[self._human_repository_concern("resolver-001", ["technical-001"])]
+        )
+        pass_two = EvidenceResolverResult(
+            concerns=[self._human_repository_concern("resolver-002", ["analytics-001"])]
+        )
+
+        async def execute(agent: str, _input_text: str):
+            calls.append(agent)
+            if agent == "resolver_pass_1":
+                return pass_one if calls.count(agent) == 1 else pass_two
+            return OUTPUTS[agent]
+
+        with self._patched_agent_factories(), patch.object(
+            orchestrator_module,
+            "bounded_targeted_lookup",
+            return_value=([], ["No tracked file matched."]),
+        ):
+            with self.assertRaisesRegex(
+                CouncilOrchestrationError,
+                "lookup-before-human invariant",
+            ):
+                await run_council(FEATURE, self._context(), execute)
+
+        self.assertNotIn("producer", calls)
+        self.assertNotIn("director", calls)
+
+    async def test_product_and_experiment_statuses_do_not_force_lookup(self) -> None:
+        calls: list[str] = []
+        resolver = EvidenceResolverResult(
+            concerns=[
+                ResolvedConcern(
+                    concern_id="resolver-001",
+                    kind="unknown",
+                    canonical_concern="Product choice",
+                    source_concern_ids=["game-design-001"],
+                    status=ResolutionStatus.HUMAN_PRODUCT_DECISION,
+                    why_unresolved="Product intent is not stored in source.",
+                    human_question="Which behavior is intended?",
+                ),
+                ResolvedConcern(
+                    concern_id="resolver-002",
+                    kind="unknown",
+                    canonical_concern="Player response",
+                    source_concern_ids=["analytics-001"],
+                    status=ResolutionStatus.REQUIRES_EXPERIMENT,
+                    why_unresolved="Static source cannot establish player response.",
+                    how_to_answer="Run the bounded experiment.",
+                ),
+            ]
+        )
+
+        async def execute(agent: str, _input_text: str):
+            calls.append(agent)
+            return resolver if agent == "resolver_pass_1" else OUTPUTS[agent]
+
+        with self._patched_agent_factories(), patch.object(
+            orchestrator_module,
+            "bounded_targeted_lookup",
+        ) as lookup:
+            await run_council(FEATURE, self._context(), execute)
+
+        lookup.assert_not_called()
+        self.assertEqual(calls.count("resolver_pass_1"), 1)
+        self.assertIn("producer", calls)
+        self.assertIn("director", calls)
 
     def test_repository_evidence_uses_exact_bundle_and_source_type(self) -> None:
         valid_game_design = self._game_design_with_evidence(
@@ -688,6 +1083,21 @@ class OrchestratorTests(unittest.IsolatedAsyncioTestCase):
         )
         return GAME_DESIGN.model_copy(
             update={"evidence": [evidence], "findings": [finding]}
+        )
+
+    @staticmethod
+    def _human_repository_concern(
+        concern_id: str,
+        source_ids: list[str],
+    ) -> ResolvedConcern:
+        return ResolvedConcern(
+            concern_id=concern_id,
+            kind="unknown",
+            canonical_concern=f"Repository location for {concern_id}",
+            source_concern_ids=source_ids,
+            status=ResolutionStatus.HUMAN_REPOSITORY_HELP,
+            why_unresolved="The supplied evidence does not identify the location.",
+            human_question="Which tracked source owns this behavior?",
         )
 
 

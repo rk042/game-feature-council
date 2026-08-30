@@ -20,9 +20,12 @@ from council.agents import (
 from council.execution import AgentCallResult, execute_agent
 from council.context import (
     ContextBuilderError,
+    derive_search_terms,
     validate_repository_evidence_ids,
 )
 from council.evidence_resolver import (
+    MAX_LOOKUP_REQUESTS,
+    MAX_LOOKUP_TERMS_PER_REQUEST,
     bounded_targeted_lookup,
     collect_source_concerns,
     feature_sha256,
@@ -35,13 +38,16 @@ from council.models import (
     ContextBundle,
     CouncilResult,
     DirectorResult,
+    EvidenceLookupRequest,
     EvidenceResolverRecord,
     EvidenceResolverResult,
     EvidenceType,
     GameDesignResult,
     ProducerResult,
+    ResolutionStatus,
     RoleTelemetry,
     ScopeRiskResult,
+    SourceConcern,
     SpecialistCommon,
     TechnicalResult,
     TokenUsage,
@@ -153,20 +159,33 @@ async def run_council_with_telemetry(
         progress_listener,
     )
     _validate_resolver_source_ids(source_concerns, resolver_pass_1)
+    lookup_requests, workflow_enforced_lookup = _prepare_resolver_lookups(
+        source_concerns,
+        resolver_pass_1,
+        context.search_terms,
+    )
     supplemental_evidence = []
     lookup_limitations: list[str] = []
     resolver_final = resolver_pass_1
     resolver_telemetry = {"resolver_pass_1": resolver_pass_1_telemetry}
     second_pass_occurred = False
-    if resolver_pass_1.lookup_requests:
+    if lookup_requests:
         _emit_progress(
             progress_listener,
-            make_progress_event("evidence_lookup", ProgressStatus.STARTED),
+            make_progress_event(
+                "evidence_lookup",
+                ProgressStatus.STARTED,
+                message=(
+                    "Workflow enforced repository lookup before human repository help."
+                    if workflow_enforced_lookup
+                    else None
+                ),
+            ),
         )
         try:
             supplemental_evidence, lookup_limitations = bounded_targeted_lookup(
                 context.repository_path,
-                resolver_pass_1.lookup_requests,
+                lookup_requests,
             )
         except ContextBuilderError as error:
             lookup_limitations = [
@@ -184,7 +203,9 @@ async def run_council_with_telemetry(
                 feature,
                 context,
                 source_concerns,
-                resolver_pass_1,
+                resolver_pass_1.model_copy(
+                    update={"lookup_requests": lookup_requests}
+                ),
                 supplemental_evidence,
                 lookup_limitations,
                 game_design,
@@ -200,13 +221,7 @@ async def run_council_with_telemetry(
         resolver_telemetry["resolver_pass_2"] = resolver_pass_2_telemetry
         second_pass_occurred = True
     _validate_resolver_source_ids(source_concerns, resolver_final)
-    if any(
-        concern.status.value == "human_repository_help"
-        for concern in resolver_final.concerns
-    ) and not resolver_pass_1.lookup_requests:
-        raise CouncilOrchestrationError(
-            "Evidence Resolver requested human repository help without a bounded lookup attempt."
-        )
+    _validate_final_repository_help(resolver_final, lookup_requests)
     validate_resolver_evidence(
         context,
         resolver_final,
@@ -217,7 +232,7 @@ async def run_council_with_telemetry(
         feature_sha256=feature_sha256(feature),
         source_concerns=source_concerns,
         concerns=resolver_final.concerns,
-        lookup_requests=resolver_pass_1.lookup_requests,
+        lookup_requests=lookup_requests,
         supplemental_evidence=supplemental_evidence,
         lookup_limitations=lookup_limitations,
         second_pass_occurred=second_pass_occurred,
@@ -338,6 +353,7 @@ def render_evidence_resolver_input(
     analytics: AnalyticsResult,
     scope_risk: ScopeRiskResult,
 ) -> str:
+    allowed_source_ids = [getattr(item, "id") for item in source_concerns]
     return "\n".join(
         [
             "FEATURE (UNTRUSTED DATA)",
@@ -356,6 +372,14 @@ def render_evidence_resolver_input(
                 sort_keys=True,
                 ensure_ascii=False,
             ),
+            "",
+            "ALLOWED SOURCE CONCERN IDS (OPAQUE IDENTIFIERS)",
+            "================================================",
+            "\n".join(allowed_source_ids) or "(none)",
+            "",
+            "Copy only exact IDs from this registry in source_concern_ids and "
+            "lookup request concern_ids. Never invent or transform an ID. A "
+            "Resolver concern must originate from supplied source concerns.",
             "",
             "SPECIALIST RESULTS (UNTRUSTED DATA)",
             "====================================",
@@ -623,10 +647,128 @@ def _validate_resolver_source_ids(
         if source_id not in available
     ]
     if invalid or requested:
-        values = invalid + requested
+        values = sorted(set(invalid + requested))
+        unknown = values[0]
+        additional = (
+            f"\nAdditional invalid IDs: {len(values) - 1}"
+            if len(values) > 1
+            else ""
+        )
         raise CouncilOrchestrationError(
-            "Evidence Resolver referenced unknown source concern IDs: "
-            + ", ".join(values)
+            "Evidence Resolver returned an invalid source reference.\n\n"
+            f"Unknown ID:\n{unknown}\n\n"
+            "The run was stopped to preserve evidence provenance."
+            + additional
+        )
+
+
+def _prepare_resolver_lookups(
+    source_concerns: list[SourceConcern],
+    resolver: EvidenceResolverResult,
+    context_search_terms: list[str],
+) -> tuple[list[EvidenceLookupRequest], bool]:
+    """Ensure repository-help concerns receive a real bounded lookup first."""
+    requests = list(resolver.lookup_requests[:MAX_LOOKUP_REQUESTS])
+    attempted_source_ids = {
+        source_id
+        for request in requests
+        for source_id in request.concern_ids
+    }
+    uncovered = [
+        concern
+        for concern in resolver.concerns
+        if concern.status == ResolutionStatus.HUMAN_REPOSITORY_HELP
+        and not set(concern.source_concern_ids).issubset(attempted_source_ids)
+    ]
+    if not uncovered:
+        return requests, False
+
+    source_by_id = {concern.id: concern for concern in source_concerns}
+    source_ids = list(
+        dict.fromkeys(
+            source_id
+            for concern in uncovered
+            for source_id in concern.source_concern_ids
+        )
+    )
+    search_text = "\n".join(
+        [
+            *(concern.canonical_concern for concern in uncovered),
+            *(
+                source_by_id[source_id].text
+                for source_id in source_ids
+                if source_id in source_by_id
+            ),
+        ]
+    )
+    derived_terms = derive_search_terms(
+        search_text,
+        max_terms=MAX_LOOKUP_TERMS_PER_REQUEST,
+    )
+    search_terms: list[str] = []
+    for term in [*derived_terms, *context_search_terms]:
+        if len(search_terms) == MAX_LOOKUP_TERMS_PER_REQUEST:
+            break
+        if 0 < len(term) <= 80 and term not in search_terms:
+            search_terms.append(term)
+    if not search_terms:
+        fallback = " ".join(search_text.split())[:80]
+        if fallback:
+            search_terms.append(fallback)
+    if not search_terms:
+        raise CouncilOrchestrationError(
+            "Evidence Resolver requested human repository help, but no bounded "
+            "search term could be derived from the supplied concern registry."
+        )
+
+    fallback_request = EvidenceLookupRequest(
+        concern_ids=source_ids,
+        search_terms=search_terms,
+    )
+    if len(requests) == MAX_LOOKUP_REQUESTS:
+        final_request = requests[-1]
+        merged_terms = list(
+            dict.fromkeys(
+                [
+                    *search_terms[: MAX_LOOKUP_TERMS_PER_REQUEST - 1],
+                    final_request.search_terms[0],
+                    *search_terms[MAX_LOOKUP_TERMS_PER_REQUEST - 1 :],
+                    *final_request.search_terms[1:],
+                ]
+            )
+        )[:MAX_LOOKUP_TERMS_PER_REQUEST]
+        requests[-1] = EvidenceLookupRequest(
+            concern_ids=list(
+                dict.fromkeys([*final_request.concern_ids, *source_ids])
+            ),
+            search_terms=merged_terms,
+        )
+    else:
+        requests.append(fallback_request)
+    return requests, True
+
+
+def _validate_final_repository_help(
+    resolver: EvidenceResolverResult,
+    attempted_requests: list[EvidenceLookupRequest],
+) -> None:
+    attempted_source_ids = {
+        source_id
+        for request in attempted_requests
+        for source_id in request.concern_ids
+    }
+    invalid = [
+        concern.concern_id
+        for concern in resolver.concerns
+        if concern.status == ResolutionStatus.HUMAN_REPOSITORY_HELP
+        and not set(concern.source_concern_ids).issubset(attempted_source_ids)
+    ]
+    if invalid:
+        raise CouncilOrchestrationError(
+            "Evidence Resolver requested human repository help before a bounded "
+            "lookup was attempted for the concern.\n\n"
+            f"Concern ID:\n{invalid[0]}\n\n"
+            "The run was stopped to preserve the lookup-before-human invariant."
         )
 
 

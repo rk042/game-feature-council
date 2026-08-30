@@ -8,14 +8,18 @@ from pathlib import Path
 import test_evaluation
 from council.cli import _preferred_report_path
 from council.evaluation import create_comparison_record
-from council.html_reporting import _cost_chart
+from council.html_reporting import _cost_chart, render_html_report as render_council_html
 from council.models import (
     ComparisonPreference,
+    ConcernKind,
     EvidenceItem,
+    EvidenceResolverRecord,
     EvidenceType,
     HumanAction,
     HumanComparisonReview,
     HumanDecision,
+    ResolvedConcern,
+    ResolutionStatus,
 )
 from council.reporting import (
     EXPECTED_ARTIFACT_FILES,
@@ -84,6 +88,95 @@ class HtmlReportingTests(unittest.TestCase):
         self.assertNotIn("PRIVATE SOURCE EXCERPT", html)
         self.assertEqual(render_html_report(self.record), html)
         self.assertEqual(self.record.model_dump(mode="json"), before)
+
+    def test_council_html_starts_with_a_persisted_mvp_decision_brief(self) -> None:
+        html = render_html_report(self.record)
+
+        ordered_sections = (
+            '<section id="what-you-asked"',
+            '<section id="recommendation"',
+            '<section id="what-we-have"',
+            '<section id="what-is-open"',
+            '<section id="recommended-mvp"',
+            '<section id="not-building"',
+            '<section id="what-we-learn"',
+            '<section id="success-looks-like"',
+            '<section id="effort-estimation"',
+            '<section id="what-happens-next"',
+            '<section id="detailed-analysis"',
+        )
+        positions = [html.index(section) for section in ordered_sections]
+        self.assertEqual(positions, sorted(positions))
+        divider = html.index('<section id="detailed-analysis"')
+        self.assertIn("example-repository", html[:divider])
+        self.assertIn("PROTOTYPE FIRST", html[:divider])
+        self.assertIn("Enough to prototype", html[:divider])
+        self.assertNotIn("Confidence: medium", html[:divider])
+        self.assertIn("Confidence: medium", html[divider:])
+        self.assertIn(
+            self.record.council_result.director.experiment.smallest_experiment,
+            html[:divider],
+        )
+        self.assertIn("Full production feature.", html[:divider])
+        self.assertIn("Technical Audit Details", html[divider:])
+
+    def test_brief_uses_only_consolidated_resolver_concerns(self) -> None:
+        resolver = EvidenceResolverRecord(
+            feature_sha256="a" * 64,
+            source_concerns=[],
+            concerns=[
+                ResolvedConcern(
+                    concern_id="concern-001",
+                    kind=ConcernKind.UNKNOWN,
+                    canonical_concern="Existing reward grant flow",
+                    source_concern_ids=["source-001"],
+                    status=ResolutionStatus.RESOLVED_FROM_REPOSITORY,
+                    resolution="The supplied repository evidence identifies a reusable grant flow.",
+                    evidence_ids=["repo-001"],
+                ),
+                ResolvedConcern(
+                    concern_id="concern-002",
+                    kind=ConcernKind.RISK,
+                    canonical_concern="Eligibility remains unverified",
+                    source_concern_ids=["source-002"],
+                    status=ResolutionStatus.HUMAN_REPOSITORY_HELP,
+                    why_unresolved="The selected evidence does not show eligibility enforcement.",
+                    human_question="Which existing service enforces eligibility?",
+                ),
+            ],
+            lookup_requests=[],
+            supplemental_evidence=[],
+            lookup_limitations=[],
+            second_pass_occurred=False,
+            attempted_calls=0,
+            usage_complete=True,
+            estimated_cost_usd=Decimal("0"),
+            unpriced_models=[],
+            pricing_snapshot_id=self.record.pricing_snapshot_id,
+        )
+
+        html = render_council_html(self.record, evidence_resolver=resolver)
+        divider = html.index('<section id="detailed-analysis"')
+        brief = html[:divider]
+
+        self.assertIn("Existing reward grant flow", brief)
+        self.assertIn("Eligibility remains unverified", brief)
+        self.assertIn("The selected evidence does not show eligibility enforcement.", brief)
+        self.assertIn("Evidence Resolution", html[divider:])
+        self.assertNotIn("source-001", brief)
+
+    def test_brief_never_turns_unavailable_effort_into_zero_days(self) -> None:
+        record = self.record.model_copy(deep=True)
+        record.council_result.director.effort.developer_days_min = None
+        record.council_result.director.effort.developer_days_max = None
+        record.council_result.director.effort.basis = "Selected evidence does not support a numeric estimate."
+
+        html = render_html_report(record)
+        brief = html[:html.index('<section id="detailed-analysis"')]
+
+        self.assertIn("Not reliable yet", brief)
+        self.assertIn("Selected evidence does not support a numeric estimate.", brief)
+        self.assertNotIn("0-0 developer days", brief)
 
     def test_new_council_and_generalist_runs_write_both_reports(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

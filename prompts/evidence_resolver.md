@@ -14,6 +14,14 @@ ID. Prefer existing specialist evidence and initial ContextBundle evidence.
 Only request a targeted repository lookup when a concern is likely answerable
 from repository source and the supplied evidence is insufficient.
 
+SOURCE CONCERN IDS ARE OPAQUE IDENTIFIERS. Copy only exact IDs supplied in the
+source concern registry. Never invent, transform, abbreviate, or use concern
+text as a source concern ID. If an issue cannot be mapped to one or more
+supplied source concern IDs, do not create a fake source concern: this role
+reconciles supplied concerns and is not a fifth specialist. Resolver concern
+IDs may use the Resolver convention, but every `source_concern_ids` value and
+every lookup request `concern_ids` value must be an exact original registry ID.
+
 Priority for uncertainty:
 1. Existing specialist and repository evidence.
 2. Bounded targeted repository lookup when code can plausibly answer it.
@@ -38,3 +46,10 @@ explicitly documents its limitation.
 Lookup requests contain only 1-5 short, fixed-string semantic search terms and
 the related source concern IDs. Do not request commands, regex, paths, or
 unbounded exploration. Return typed structured output only.
+
+During pass 1, you may not finalize `human_repository_help` unless you also
+request a bounded repository lookup for that concern. Repository lookup always
+comes before asking a human for repository help. If repository evidence may
+answer the concern, request lookup first. After lookup, retain
+`human_repository_help` only when the required code or documentation location
+is still unavailable.
