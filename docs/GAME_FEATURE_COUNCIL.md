@@ -17,10 +17,17 @@ remains mandatory for Council recommendations.
 ## Architecture
 
 One canonical feature brief and one `ContextBundle` are shared across the
-selected evaluation paths:
+selected evaluation paths. Interactive users may opt into a paid interpretation
+step before any repository content is read or transmitted:
 
 ```text
-feature brief + tracked Git working tree
+original user request
+        |
+optional Feature Refiner (feature text only)
+        |
+user approval
+        |
+approved canonical feature + tracked Git working tree
                  |
            Context Builder (once)
                  |
@@ -50,6 +57,15 @@ same bundle to both paths.
 
 The fixed pipeline is intentionally implemented without agent handoffs,
 free-form debate, or a separate orchestration framework.
+
+The Refiner clarifies wording, preserves explicit constraints, and exposes
+ambiguity; it does not inspect repository context, design implementation,
+resolve evidence, or replace any specialist. Consent for this call defaults to
+No and is separate from the later repository-context consent. Rejected output
+may be corrected with another explicitly approved call, up to three total
+Refiner calls. The original request and deterministic round history are stored
+in `feature_refinement.json` only when the Refiner was used. `input.json`
+records the canonical feature actually evaluated.
 
 ## Context Builder
 
@@ -159,10 +175,15 @@ Model selection is configuration-controlled:
 
 - `COUNCIL_SPECIALIST_MODEL` selects the four specialist models.
 - `COUNCIL_SYNTHESIS_MODEL` selects Producer, Director, and Generalist.
+- `COUNCIL_REFINER_MODEL` selects the optional interactive Feature Refiner; if
+  unset, it falls back to the exact synthesis model configuration.
 
 The model names in README setup examples are examples, not hard-coded runtime
 defaults. A cost cap fails safely before execution when a selected model is not
-priced in the local snapshot.
+priced in the local snapshot. For interactive refined runs, the cap covers the
+cumulative actual estimated cost of completed Refiner calls plus the
+conservative downstream estimate. Unknown or unpriced completed usage fails
+closed when a cap is configured.
 
 Agents SDK tracing is explicitly disabled for every model call by default.
 `COUNCIL_ENABLE_TRACING=1` opts into tracing while sensitive generation and
