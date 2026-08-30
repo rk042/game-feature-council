@@ -770,12 +770,11 @@ def _duration_chart(roles: Mapping[str, RoleTelemetry]) -> str:
 def _cost_chart(costs: Mapping[str, Decimal]) -> str:
     maximum = max(costs.values(), default=Decimal("0"))
     bars = "".join(
-        _single_bar(
+        _bar_with_width(
             ROLE_LABELS[role],
-            float(cost),
-            float(maximum),
             _money(cost),
             "cost",
+            _decimal_percentage(cost, maximum),
         )
         for role, cost in costs.items()
     )
@@ -790,11 +789,27 @@ def _single_bar(
     css_class: str,
 ) -> str:
     width = (value / maximum * 100) if maximum else 0
+    return _bar_with_width(label, display, css_class, width)
+
+
+def _bar_with_width(
+    label: str,
+    display: str,
+    css_class: str,
+    width: float | Decimal,
+) -> str:
     return f"""
 <div class="bar-row">
   <div class="bar-label"><span>{_h(label)}</span><b>{_h(display)}</b></div>
   <div class="bar-track" aria-label="{_h(label)}: {_h(display)}"><span class="bar {css_class}" style="width:{width:.3f}%"></span></div>
 </div>"""
+
+
+def _decimal_percentage(value: Decimal, maximum: Decimal) -> Decimal:
+    if maximum <= 0:
+        return Decimal("0")
+    percentage = value / maximum * Decimal("100")
+    return min(Decimal("100"), max(Decimal("0"), percentage))
 
 
 def _risks_section(

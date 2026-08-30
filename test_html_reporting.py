@@ -1,11 +1,14 @@
+import re
 import tempfile
 import unittest
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 
 import test_evaluation
 from council.cli import _preferred_report_path
 from council.evaluation import create_comparison_record
+from council.html_reporting import _cost_chart
 from council.models import (
     ComparisonPreference,
     EvidenceItem,
@@ -37,6 +40,21 @@ class HtmlReportingTests(unittest.TestCase):
         self.evaluation = test_evaluation.EvaluationTests()
         self.context = self.evaluation._context()
         self.record = self.evaluation._run_record(self.context)
+
+    def _cost_widths(self, costs: dict[str, Decimal]) -> list[Decimal]:
+        html = _cost_chart(costs)
+        raw_widths = re.findall(
+            r'class="bar cost" style="width:([^%"]+)%"',
+            html,
+        )
+        self.assertEqual(len(raw_widths), len(costs))
+        for raw_width in raw_widths:
+            self.assertRegex(raw_width, r"^\d+(?:\.\d+)?$")
+        widths = [Decimal(raw_width) for raw_width in raw_widths]
+        self.assertTrue(
+            all(Decimal("0") <= width <= Decimal("100") for width in widths)
+        )
+        return widths
 
     def test_html_is_self_contained_grounded_and_has_disclaimer(self) -> None:
         before = self.record.model_dump(mode="json")
@@ -202,6 +220,57 @@ class HtmlReportingTests(unittest.TestCase):
         self.assertIn("Unpriced", html)
         self.assertNotIn("$0.000000", html)
         self.assertNotIn("Estimated Cost by Role", html)
+
+    def test_cost_chart_normalizes_very_large_decimals_without_nan_or_inf(self) -> None:
+        html = _cost_chart(
+            {
+                "game_design": Decimal("1e10000"),
+                "technical": Decimal("5e9999"),
+            }
+        )
+
+        widths = self._cost_widths(
+            {
+                "game_design": Decimal("1e10000"),
+                "technical": Decimal("5e9999"),
+            }
+        )
+        self.assertEqual(widths, [Decimal("100.000"), Decimal("50.000")])
+        width_styles = re.findall(r'style="width:([^"]+)"', html)
+        self.assertFalse(
+            any(re.search(r"(?i)(?:nan|inf(?:inity)?)", value) for value in width_styles)
+        )
+
+    def test_cost_chart_handles_all_zero_costs(self) -> None:
+        widths = self._cost_widths(
+            {
+                "game_design": Decimal("0"),
+                "technical": Decimal("0"),
+            }
+        )
+
+        self.assertEqual(widths, [Decimal("0.000"), Decimal("0.000")])
+
+    def test_cost_chart_maps_all_equal_costs_to_equal_full_widths(self) -> None:
+        widths = self._cost_widths(
+            {
+                "game_design": Decimal("1.25"),
+                "technical": Decimal("1.25"),
+                "analytics": Decimal("1.25"),
+            }
+        )
+
+        self.assertEqual(widths, [Decimal("100.000")] * 3)
+
+    def test_cost_chart_preserves_normal_mixed_proportions(self) -> None:
+        widths = self._cost_widths(
+            {
+                "game_design": Decimal("0.25"),
+                "technical": Decimal("1.00"),
+            }
+        )
+
+        self.assertEqual(widths, [Decimal("25.000"), Decimal("100.000")])
 
     def test_council_only_does_not_fabricate_generalist_or_risk_scores(self) -> None:
         html = render_html_report(self.record)
