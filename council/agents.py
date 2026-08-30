@@ -6,6 +6,7 @@ from agents import Agent
 from council.models import (
     AnalyticsResult,
     DirectorResult,
+    FeatureRefinerResult,
     GameDesignResult,
     ProducerResult,
     ScopeRiskResult,
@@ -90,4 +91,15 @@ def create_generalist_agent() -> Agent:
         instructions=load_prompt("generalist.md"),
         model=model,
         output_type=DirectorResult,
+    )
+
+
+def create_feature_refiner_agent(model: str | None = None) -> Agent:
+    from council.refinement import configured_refiner_model
+
+    return Agent(
+        name="Feature Refiner",
+        instructions=load_prompt("feature_refiner.md"),
+        model=model or configured_refiner_model(),
+        output_type=FeatureRefinerResult,
     )

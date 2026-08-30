@@ -9,6 +9,7 @@ from council.models import (
     ComparisonRecord,
     ContextBundle,
     DirectorResult,
+    FeatureRefinementRecord,
     GeneralistExecution,
     RoleTelemetry,
     RunRecord,
@@ -60,6 +61,7 @@ def render_html_report(
     comparison: ComparisonRecord | None = None,
     *,
     risks_and_unknowns: Iterable[str] = (),
+    feature_refinement: FeatureRefinementRecord | None = None,
 ) -> str:
     result = record.council_result
     director = result.director
@@ -75,6 +77,8 @@ def render_html_report(
         ("specialists", "Specialist Findings"),
         ("producer", "Producer Synthesis"),
     ]
+    if feature_refinement is not None:
+        sections.insert(1, ("feature-refinement", "Feature Refinement"))
     if comparison is not None:
         sections.append(("comparison", "Generalist Comparison"))
     sections.extend(
@@ -94,8 +98,9 @@ def render_html_report(
                 mode=mode,
             ),
             _ai_disclaimer(),
-            _council_executive(record, comparison),
+            _council_executive(record, comparison, feature_refinement),
             _feature_repository(record.feature_input, result.context),
+            _feature_refinement_section(feature_refinement),
             _director_section(
                 director,
                 record.telemetry.roles.get("director"),
@@ -144,6 +149,7 @@ def render_generalist_html_report(
     execution: GeneralistExecution,
     *,
     started_at: str,
+    feature_refinement: FeatureRefinementRecord | None = None,
 ) -> str:
     result = execution.result
     sections = [
@@ -155,12 +161,15 @@ def render_generalist_html_report(
         ("evidence", "Repository Evidence"),
         ("human-review", "Human Review"),
     ]
+    if feature_refinement is not None:
+        sections.insert(1, ("feature-refinement", "Feature Refinement"))
     body = "".join(
         [
             _header(run_id=run_id, started_at=started_at, mode="Generalist"),
             _ai_disclaimer(),
-            _generalist_executive(execution),
+            _generalist_executive(execution, feature_refinement),
             _feature_repository(feature_input, context),
+            _feature_refinement_section(feature_refinement),
             _generalist_recommendation(result),
             _generalist_workflow(),
             _metrics_section(
@@ -238,6 +247,7 @@ def _ai_disclaimer() -> str:
 def _council_executive(
     record: RunRecord,
     comparison: ComparisonRecord | None,
+    refinement: FeatureRefinementRecord | None,
 ) -> str:
     director = record.council_result.director
     usage = record.telemetry.total_usage
@@ -264,7 +274,12 @@ def _council_executive(
         metrics.extend(
             [
                 (
-                    "Combined Cost",
+                    (
+                        "Known Downstream Cost"
+                        if refinement is not None
+                        and not refinement.usage_complete
+                        else "Combined Cost"
+                    ),
                     _persisted_cost(
                         combined_cost,
                         (
@@ -293,14 +308,67 @@ def _council_executive(
                 ("Generalist Tokens", f"{generalist.total_tokens:,}"),
             ]
         )
+    if refinement is not None:
+        downstream_costs = [record.estimated_cost_usd]
+        downstream_tokens = tokens
+        downstream_calls = calls
+        unpriced = [*record.unpriced_models, *refinement.unpriced_models]
+        if comparison is not None:
+            downstream_costs.append(
+                comparison.generalist.estimated_cost_usd
+            )
+            downstream_tokens += comparison.generalist.telemetry.usage.total_tokens
+            downstream_calls += comparison.generalist.telemetry.usage.requests
+            unpriced.extend(comparison.generalist.unpriced_models)
+        all_costs = [refinement.estimated_cost_usd, *downstream_costs]
+        known_cost = (
+            _sum_complete_decimals(all_costs)
+            if refinement.usage_complete
+            else _sum_known_decimals(all_costs)
+        )
+        metrics.extend(
+            [
+                (
+                    "Known Refiner Cost",
+                    _refinement_persisted_cost(refinement),
+                ),
+                ("Refiner Tokens", f"{refinement.telemetry.usage.total_tokens:,}"),
+                ("Refiner Attempts", str(refinement.attempted_calls)),
+                ("Refiner Completed Calls", str(refinement.refinement_rounds)),
+                (
+                    "Overall Tokens",
+                    f"{downstream_tokens + refinement.telemetry.usage.total_tokens:,}",
+                ),
+            ]
+        )
+        if refinement.usage_complete:
+            metrics.extend(
+                [
+                    ("Overall Cost", _persisted_cost(known_cost, unpriced)),
+                    (
+                        "Overall Calls",
+                        str(downstream_calls + refinement.refinement_rounds),
+                    ),
+                ]
+            )
+        else:
+            metrics.extend(
+                [
+                    ("Known Session Cost", _persisted_cost(known_cost, unpriced)),
+                    ("Session Cost", "Incomplete"),
+                    ("Usage", "Incomplete"),
+                ]
+            )
     return _metric_section(metrics)
 
 
-def _generalist_executive(execution: GeneralistExecution) -> str:
+def _generalist_executive(
+    execution: GeneralistExecution,
+    refinement: FeatureRefinementRecord | None,
+) -> str:
     result = execution.result
     usage = execution.telemetry.usage
-    return _metric_section(
-        [
+    metrics = [
             ("Generalist Decision", result.decision.value),
             ("Confidence", result.confidence.value),
             (
@@ -314,7 +382,54 @@ def _generalist_executive(execution: GeneralistExecution) -> str:
             ("Duration", _duration(execution.telemetry.duration_ms)),
             ("Model Calls", str(usage.requests)),
         ]
-    )
+    if refinement is not None:
+        costs = [refinement.estimated_cost_usd, execution.estimated_cost_usd]
+        known_cost = (
+            _sum_complete_decimals(costs)
+            if refinement.usage_complete
+            else _sum_known_decimals(costs)
+        )
+        metrics.extend(
+            [
+                (
+                    "Known Refiner Cost",
+                    _refinement_persisted_cost(refinement),
+                ),
+                ("Refiner Tokens", f"{refinement.telemetry.usage.total_tokens:,}"),
+                ("Refiner Attempts", str(refinement.attempted_calls)),
+                ("Refiner Completed Calls", str(refinement.refinement_rounds)),
+                (
+                    "Overall Tokens",
+                    f"{usage.total_tokens + refinement.telemetry.usage.total_tokens:,}",
+                ),
+            ]
+        )
+        all_unpriced = (
+            *refinement.unpriced_models,
+            *execution.unpriced_models,
+        )
+        if refinement.usage_complete:
+            metrics.extend(
+                [
+                    ("Overall Cost", _persisted_cost(known_cost, all_unpriced)),
+                    (
+                        "Overall Calls",
+                        str(usage.requests + refinement.refinement_rounds),
+                    ),
+                ]
+            )
+        else:
+            metrics.extend(
+                [
+                    (
+                        "Known Session Cost",
+                        _persisted_cost(known_cost, all_unpriced),
+                    ),
+                    ("Session Cost", "Incomplete"),
+                    ("Usage", "Incomplete"),
+                ]
+            )
+    return _metric_section(metrics)
 
 
 def _metric_section(metrics: Iterable[tuple[str, str]]) -> str:
@@ -344,6 +459,66 @@ def _feature_repository(feature: str, context: ContextBundle) -> str:
       <dt>Selected evidence</dt><dd>{evidence_count}</dd>
     </dl>
   </div>
+</section>
+"""
+
+
+def _feature_refinement_section(
+    refinement: FeatureRefinementRecord | None,
+) -> str:
+    if refinement is None:
+        return ""
+    if refinement.approved:
+        status = "User approved; refined brief evaluated downstream"
+        brief_heading = "Approved Refined Feature Brief"
+        brief = refinement.approved_refined_feature or ""
+    else:
+        status = "Not approved; original request evaluated downstream"
+        if refinement.rounds:
+            brief_heading = "Latest AI Proposal (not evaluated)"
+            brief = refinement.rounds[-1].result.refined_brief
+        else:
+            brief_heading = "AI Interpretation"
+            brief = "No interpretation completed because the attempt failed."
+    unresolved = (
+        "<div class=\"card\"><h3>Unresolved Before Repository Analysis</h3>"
+        + _text_list(refinement.unresolved_points)
+        + "</div>"
+        if refinement.unresolved_points
+        else ""
+    )
+    usage_note = (
+        ""
+        if refinement.usage_complete
+        else (
+            "<p><b>Feature Refiner usage: Incomplete.</b> "
+            "Known costs exclude one failed attempt because it did not return "
+            "usage telemetry. Reason: "
+            f"{_h(refinement.usage_unavailable_reason or 'Usage unavailable.')}"
+            "</p>"
+        )
+    )
+    cost_label = (
+        "Known Refiner cost"
+        if not refinement.usage_complete
+        else "Refiner cost"
+    )
+    return f"""
+<section id="feature-refinement">
+  <h2>Feature Refinement</h2>
+  <p class="section-note">AI-generated interpretation preserved for auditability. The user approval status below determines the canonical feature input.</p>
+  <div class="two-column">
+    <div class="card"><h3>Original Feature Request</h3><p class="prewrap">{_h(refinement.original_feature)}</p></div>
+    <div class="card"><h3>Status</h3><p>{_h(status)}</p><p><b>Attempts:</b> {refinement.attempted_calls}</p><p><b>Completed rounds:</b> {refinement.refinement_rounds}</p></div>
+  </div>
+  <div class="three-column">
+    <div class="card"><h3>Concise Interpretation</h3>{_text_list(refinement.concise_interpretation) if refinement.concise_interpretation else '<p>Not available because the attempt failed.</p>'}</div>
+    {unresolved}
+    <div class="card"><h3>Preserved Constraints</h3>{_text_list(refinement.preserved_constraints)}</div>
+  </div>
+  <details><summary>{_h(brief_heading)}</summary><p class="prewrap">{_h(brief)}</p></details>
+  <p><b>Shared preprocessing telemetry:</b> model {_h(refinement.telemetry.model)}; {_h(str(refinement.telemetry.duration_ms))} ms; {refinement.telemetry.usage.total_tokens} known tokens; {refinement.refinement_rounds} completed calls; {cost_label} {_refinement_persisted_cost(refinement)}; pricing snapshot {_h(refinement.pricing_snapshot_id)}.</p>
+  {usage_note}
 </section>
 """
 
@@ -956,6 +1131,32 @@ def _persisted_cost(
         return _money(cost)
     models = list(unpriced_models)
     return "Unpriced" if models else "Unavailable"
+
+
+def _refinement_persisted_cost(
+    refinement: FeatureRefinementRecord,
+) -> str:
+    if not refinement.usage_complete and not refinement.rounds:
+        return "Unavailable"
+    return _persisted_cost(
+        refinement.estimated_cost_usd,
+        refinement.unpriced_models,
+    )
+
+
+def _sum_complete_decimals(values: Iterable[Decimal | None]) -> Decimal | None:
+    collected = list(values)
+    if any(value is None for value in collected):
+        return None
+    return sum(
+        (value for value in collected if value is not None),
+        Decimal("0"),
+    )
+
+
+def _sum_known_decimals(values: Iterable[Decimal | None]) -> Decimal | None:
+    known = [value for value in values if value is not None]
+    return sum(known, Decimal("0")) if known else None
 
 
 def _money(value: Decimal) -> str:

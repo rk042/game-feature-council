@@ -26,6 +26,9 @@ from council.evaluation import prompt_for_comparison_review
 from council.models import (
     ContextBundle,
     CouncilExecution,
+    FeatureRefinementRecord,
+    FeatureRefinementRound,
+    FeatureRefinerResult,
     GeneralistExecution,
     RoleTelemetry,
     TokenUsage,
@@ -54,6 +57,7 @@ SPECIALIST_ROLES = (
     "scope_risk",
 )
 OUTPUT_TOKEN_ALLOWANCES = {
+    "feature_refiner": 1_200,
     "game_design": 1_400,
     "technical": 1_400,
     "analytics": 1_400,
@@ -121,6 +125,9 @@ class RunArguments:
     yes: bool
     output_dir: str
     verbose: bool = False
+    feature_refinement: FeatureRefinementRecord | None = None
+    prior_api_calls: int = 0
+    refinement_usage_unavailable: bool = False
 
 
 @dataclass(frozen=True)
@@ -134,6 +141,14 @@ class RunCompletion:
     run_id: str
     run_directory: Path
     report_path: Path
+
+
+@dataclass(frozen=True)
+class _FeatureSelection:
+    feature: str
+    refinement: FeatureRefinementRecord | None = None
+    prior_api_calls: int = 0
+    usage_unavailable: bool = False
 
 
 class TerminalOutput(Protocol):
@@ -597,20 +612,35 @@ def _interactive_wizard(
     repository = _prompt_for_repository(input_fn, output)
     feature, feature_file = _prompt_for_feature(input_fn, output)
     mode = _prompt_for_mode(input_fn, output)
+    _read_model_configuration(mode)
     maximum_cost = _prompt_for_maximum_cost(input_fn, output)
+    original_feature = _read_feature_source(feature, feature_file)
+    selection = asyncio.run(
+        _run_feature_refinement_workflow(
+            original_feature,
+            maximum_cost,
+            input_fn=input_fn,
+            output=output,
+        )
+    )
+    if selection is None:
+        return 0
 
     completions: list[RunCompletion] = []
     code = asyncio.run(
         _run_command(
             RunArguments(
                 repo=repository,
-                feature=feature,
-                feature_file=feature_file,
+                feature=selection.feature,
+                feature_file=None,
                 mode=mode,
                 max_cost_usd=maximum_cost,
                 dry_run=False,
                 yes=False,
                 output_dir="runs",
+                feature_refinement=selection.refinement,
+                prior_api_calls=selection.prior_api_calls,
+                refinement_usage_unavailable=selection.usage_unavailable,
             ),
             input_fn=input_fn,
             output=output,
@@ -763,6 +793,351 @@ def _prompt_for_maximum_cost(
             output.error("Enter a non-negative decimal value or leave blank.")
             continue
         return value
+
+
+async def _run_feature_refinement_workflow(
+    original_feature: str,
+    maximum_cost: Decimal | None,
+    *,
+    input_fn: Callable[[str], str],
+    output: TerminalOutput,
+) -> _FeatureSelection | None:
+    from council.refinement import (
+        MAX_REFINEMENT_CALLS,
+        FeatureRefinementError,
+        configured_refiner_model,
+        create_feature_refinement_record,
+        refinement_round,
+        run_feature_refiner,
+    )
+
+    output.heading("Feature Refiner")
+    try:
+        model = configured_refiner_model()
+    except FeatureRefinementError as error:
+        output.warning(
+            f"Feature Refiner unavailable: {_sanitize_configured_secret(str(error))}"
+        )
+        output.line("Continuing with your original feature request.")
+        return _FeatureSelection(feature=original_feature)
+
+    estimate = build_refiner_preflight_estimate(original_feature, model)
+    _print_refiner_preflight(
+        model,
+        estimate,
+        Decimal("0"),
+        output,
+        correction_round=False,
+    )
+    output.warning(
+        "Your feature description only will be sent to the configured AI "
+        "model for interpretation. Repository content is not sent."
+    )
+    if not _prompt_yes_no(input_fn, "Run AI Feature Refiner? [y/N] "):
+        output.line("Continuing with your original feature request.")
+        return _FeatureSelection(feature=original_feature)
+    try:
+        _enforce_refinement_call_cost_cap(
+            estimate,
+            maximum_cost,
+            Decimal("0"),
+        )
+    except CliError as error:
+        output.error(str(error))
+        output.line("Continuing with your original feature request.")
+        return _FeatureSelection(feature=original_feature)
+    if not os.environ.get("OPENAI_API_KEY", "").strip():
+        output.error("OPENAI_API_KEY is required to run Feature Refiner.")
+        output.line("Continuing with your original feature request.")
+        return _FeatureSelection(feature=original_feature)
+
+    rounds: list[FeatureRefinementRound] = []
+    previous_result: FeatureRefinerResult | None = None
+    correction: str | None = None
+    while len(rounds) < MAX_REFINEMENT_CALLS:
+        output.line("Feature Refiner: Interpreting feature...")
+        try:
+            execution = await run_feature_refiner(
+                original_feature,
+                previous_result=previous_result,
+                user_correction=correction,
+                model=model,
+            )
+        except Exception as error:
+            output.error(
+                "Feature Refiner failed: "
+                + _sanitize_configured_secret(str(error))
+            )
+            return _resolve_failed_refinement(
+                original_feature,
+                rounds,
+                model=model,
+                input_fn=input_fn,
+                output=output,
+            )
+
+        rounds.append(
+            refinement_round(execution, user_correction=correction)
+        )
+        output.success(
+            "Feature Refiner: Interpretation ready "
+            f"{execution.telemetry.duration_ms / 1_000:.1f}s; "
+            f"{execution.telemetry.usage.total_tokens} tokens; "
+            f"{_refinement_cost_text(execution.estimated_cost_usd, execution.unpriced_models)}"
+        )
+        completed_cost = _completed_refinement_cost(rounds)
+        if (
+            maximum_cost is not None
+            and completed_cost is not None
+            and completed_cost > maximum_cost
+        ):
+            output.error(
+                "Completed Feature Refiner cost "
+                f"{_format_usd(completed_cost)} exceeded the configured "
+                f"session cap {_format_usd(maximum_cost)}."
+            )
+            _print_refinement_usage(rounds, output)
+            output.line("No repository analysis or run artifacts were created.")
+            return None
+
+        previous_result = execution.result
+        _print_refiner_interpretation(previous_result, output)
+        if _prompt_refinement_confirmation(input_fn):
+            record = create_feature_refinement_record(
+                original_feature,
+                rounds,
+                approved=True,
+            )
+            output.success("Feature refinement completed and approved.")
+            return _FeatureSelection(
+                feature=record.approved_refined_feature or original_feature,
+                refinement=record,
+                prior_api_calls=len(rounds),
+            )
+
+        if len(rounds) >= MAX_REFINEMENT_CALLS:
+            output.warning(
+                f"The {MAX_REFINEMENT_CALLS}-call Feature Refiner limit was reached."
+            )
+            return _resolve_refinement_choice(
+                original_feature,
+                rounds,
+                input_fn=input_fn,
+                output=output,
+            )
+
+        correction = _prompt_for_refinement_correction(input_fn, output)
+        next_estimate = build_refiner_preflight_estimate(
+            original_feature,
+            model,
+            previous_result=previous_result,
+            user_correction=correction,
+        )
+        _print_refiner_preflight(
+            model,
+            next_estimate,
+            completed_cost,
+            output,
+            correction_round=True,
+        )
+        output.warning(
+            "This correction requires another Feature Refiner AI call."
+        )
+        if not _prompt_refinement_yes_no(
+            input_fn,
+            "Continue? [y/N] ",
+        ):
+            return _resolve_refinement_choice(
+                original_feature,
+                rounds,
+                input_fn=input_fn,
+                output=output,
+            )
+        try:
+            _enforce_refinement_call_cost_cap(
+                next_estimate,
+                maximum_cost,
+                completed_cost,
+            )
+        except CliError as error:
+            output.error(str(error))
+            return _resolve_refinement_choice(
+                original_feature,
+                rounds,
+                input_fn=input_fn,
+                output=output,
+            )
+        estimate = next_estimate
+
+    raise AssertionError("Feature Refiner loop exceeded its deterministic cap.")
+
+
+def _print_refiner_interpretation(
+    result: FeatureRefinerResult,
+    output: TerminalOutput,
+) -> None:
+    output.heading("AI understood your feature as:")
+    for item in result.concise_interpretation:
+        output.line(f"- {item}")
+    output.heading("Still not specified:")
+    if result.unresolved_points:
+        for item in result.unresolved_points:
+            output.line(f"- {item}")
+    else:
+        output.line("- Nothing additional identified.")
+    output.heading("Preserved constraints:")
+    if result.preserved_constraints:
+        for item in result.preserved_constraints:
+            output.line(f"- {item}")
+    else:
+        output.line("- None explicitly stated.")
+    output.heading("Proposed refined feature brief:")
+    output.line(result.refined_brief)
+
+
+def _prompt_refinement_confirmation(
+    input_fn: Callable[[str], str],
+) -> bool:
+    response = _refinement_input(input_fn, "Is this what you mean? [Y/n] ")
+    return response.strip().casefold() not in {"n", "no"}
+
+
+def _prompt_for_refinement_correction(
+    input_fn: Callable[[str], str],
+    output: TerminalOutput,
+) -> str:
+    output.heading("What should I correct?")
+    while True:
+        correction = _refinement_input(input_fn, "> ")
+        if correction.strip():
+            return correction
+        output.error("Correction text is required.")
+
+
+def _prompt_refinement_yes_no(
+    input_fn: Callable[[str], str],
+    prompt: str,
+) -> bool:
+    return _refinement_input(input_fn, prompt).strip().casefold() in {
+        "y",
+        "yes",
+    }
+
+
+def _refinement_input(input_fn: Callable[[str], str], prompt: str) -> str:
+    try:
+        return input_fn(prompt)
+    except EOFError as error:
+        raise CliError(
+            "Interactive input ended after Feature Refiner execution.",
+            before_api_calls=False,
+        ) from error
+
+
+def _resolve_refinement_choice(
+    original_feature: str,
+    rounds: list[FeatureRefinementRound],
+    *,
+    input_fn: Callable[[str], str],
+    output: TerminalOutput,
+) -> _FeatureSelection | None:
+    from council.refinement import create_feature_refinement_record
+
+    output.line("1. Use the latest refined brief")
+    output.line("2. Use the original request")
+    output.line("3. Cancel")
+    while True:
+        choice = _refinement_input(input_fn, "Selection [3]: ").strip() or "3"
+        if choice == "1":
+            record = create_feature_refinement_record(
+                original_feature,
+                rounds,
+                approved=True,
+            )
+            return _FeatureSelection(
+                feature=record.approved_refined_feature or original_feature,
+                refinement=record,
+                prior_api_calls=len(rounds),
+            )
+        if choice == "2":
+            record = create_feature_refinement_record(
+                original_feature,
+                rounds,
+                approved=False,
+            )
+            output.line("Continuing with your original feature request.")
+            return _FeatureSelection(
+                feature=original_feature,
+                refinement=record,
+                prior_api_calls=len(rounds),
+            )
+        if choice == "3":
+            _print_refinement_usage(rounds, output)
+            output.line("No repository analysis or run artifacts were created.")
+            return None
+        output.error("Choose 1, 2, or 3.")
+
+
+def _resolve_failed_refinement(
+    original_feature: str,
+    rounds: list[FeatureRefinementRound],
+    *,
+    model: str,
+    input_fn: Callable[[str], str],
+    output: TerminalOutput,
+) -> _FeatureSelection | None:
+    from council.refinement import create_feature_refinement_record
+
+    output.line("1. Continue using original feature")
+    output.line("2. Cancel")
+    while True:
+        choice = _refinement_input(input_fn, "Selection [2]: ").strip() or "2"
+        if choice == "1":
+            _print_refinement_usage(rounds, output)
+            output.warning(
+                "The failed Refiner attempt has no trustworthy usage telemetry; "
+                "provider billing, if any, is unavailable."
+            )
+            record = (
+                create_feature_refinement_record(
+                    original_feature,
+                    rounds,
+                    approved=False,
+                    attempted_calls=len(rounds) + 1,
+                    usage_complete=False,
+                    usage_unavailable_reason=(
+                        "One Feature Refiner attempt did not return usage "
+                        "telemetry."
+                    ),
+                    model=rounds[-1].telemetry.model if rounds else model,
+                )
+            )
+            return _FeatureSelection(
+                feature=original_feature,
+                refinement=record,
+                prior_api_calls=record.attempted_calls,
+                usage_unavailable=True,
+            )
+        if choice == "2":
+            _print_refinement_usage(rounds, output)
+            output.line("No repository analysis or run artifacts were created.")
+            return None
+        output.error("Choose 1 or 2.")
+
+
+def _print_refinement_usage(
+    rounds: list[FeatureRefinementRound],
+    output: TerminalOutput,
+) -> None:
+    calls = len(rounds)
+    tokens = sum(item.telemetry.usage.total_tokens for item in rounds)
+    cost = _completed_refinement_cost(rounds)
+    output.line(f"Feature Refiner completed calls: {calls}")
+    output.line(f"Feature Refiner tokens: {tokens}")
+    output.line(
+        "Feature Refiner estimated cost USD: "
+        + (_format_usd(cost) if cost is not None else "unpriced")
+    )
 
 
 def _prompt_for_post_run_action(
@@ -1107,15 +1482,27 @@ async def _run_command(
     from council.evaluation import EvaluationError
     from council.orchestrator import CouncilOrchestrationError
 
+    before_any_api_calls = args.prior_api_calls == 0
     feature = _read_feature_source(args.feature, args.feature_file)
     output.line("Context Builder: Building repository context")
     context_started = perf_counter()
     try:
         context = build_context(args.repo, feature)
     except ContextBuilderError as error:
-        raise CliError(str(error), before_api_calls=True) from error
+        raise CliError(
+            str(error),
+            before_api_calls=before_any_api_calls,
+        ) from error
 
-    specialist_model, synthesis_model = _read_model_configuration(args.mode)
+    try:
+        specialist_model, synthesis_model = _read_model_configuration(
+            args.mode
+        )
+    except CliError as error:
+        raise CliError(
+            str(error),
+            before_api_calls=before_any_api_calls,
+        ) from error
     preflight = build_preflight_estimate(
         feature,
         context,
@@ -1131,7 +1518,29 @@ async def _run_command(
         preflight,
         output,
     )
-    _enforce_cost_cap(preflight, args.max_cost_usd)
+    _print_session_preflight(
+        preflight,
+        args.feature_refinement,
+        args.refinement_usage_unavailable,
+        args.max_cost_usd,
+        output,
+    )
+    try:
+        _enforce_cost_cap(
+            preflight,
+            args.max_cost_usd,
+            completed_cost=(
+                args.feature_refinement.estimated_cost_usd
+                if args.feature_refinement is not None
+                else Decimal("0")
+            ),
+            prior_usage_unavailable=args.refinement_usage_unavailable,
+        )
+    except CliError as error:
+        raise CliError(
+            str(error),
+            before_api_calls=before_any_api_calls,
+        ) from error
 
     if args.dry_run:
         output.success(
@@ -1142,16 +1551,22 @@ async def _run_command(
     if not os.environ.get("OPENAI_API_KEY", "").strip():
         raise CliError(
             "OPENAI_API_KEY is required for a real run.",
-            before_api_calls=True,
+            before_api_calls=before_any_api_calls,
         )
 
     if not args.yes and not _request_consent(input_fn, output):
         raise CliError(
             "External-data consent was not granted.",
-            before_api_calls=True,
+            before_api_calls=before_any_api_calls,
         )
 
-    output_root = _prepare_output_root(args.output_dir, context)
+    try:
+        output_root = _prepare_output_root(args.output_dir, context)
+    except CliError as error:
+        raise CliError(
+            str(error),
+            before_api_calls=before_any_api_calls,
+        ) from error
     started_at = datetime.now(timezone.utc)
     execution_started = perf_counter()
     council_execution: CouncilExecution | None = None
@@ -1216,6 +1631,7 @@ async def _run_command(
             generalist_execution,
             output_root,
             started_at,
+            feature_refinement=args.feature_refinement,
         )
     except (EvaluationError, RunArtifactError, OSError, ValueError) as error:
         presenter.fail_remaining()
@@ -1244,6 +1660,8 @@ async def _run_command(
         generalist_execution,
         total_runtime_ms,
         output,
+        feature_refinement=args.feature_refinement,
+        refinement_usage_unavailable=args.refinement_usage_unavailable,
     )
     if completion_callback is not None:
         completion_callback(
@@ -1356,6 +1774,149 @@ def build_preflight_estimate(
     )
 
 
+def build_refiner_preflight_estimate(
+    original_feature: str,
+    model: str,
+    *,
+    previous_result: FeatureRefinerResult | None = None,
+    user_correction: str | None = None,
+) -> PreflightEstimate:
+    from council.refinement import render_feature_refiner_input
+
+    input_text = render_feature_refiner_input(
+        original_feature,
+        previous_result=previous_result,
+        user_correction=user_correction,
+    )
+    budget = _RoleBudget(
+        model=model,
+        input_tokens=(
+            _characters_to_tokens(len(input_text))
+            + _prompt_tokens("feature_refiner.md")
+        ),
+        output_tokens=OUTPUT_TOKEN_ALLOWANCES["feature_refiner"],
+    )
+    budgets = {"feature_refiner": budget}
+    low_cost, low_unpriced = _estimate_budget_cost(
+        budgets,
+        Decimal("0.5"),
+    )
+    high_cost, high_unpriced = _estimate_budget_cost(
+        budgets,
+        Decimal("1"),
+    )
+    conservative_cost, conservative_unpriced = _estimate_budget_cost(
+        budgets,
+        Decimal(CONSERVATIVE_TOKEN_MULTIPLIER),
+    )
+    return PreflightEstimate(
+        expected_calls=1,
+        rough_input_tokens=budget.input_tokens,
+        output_token_allowance=budget.output_tokens,
+        estimated_cost_low_usd=low_cost,
+        estimated_cost_high_usd=high_cost,
+        conservative_max_cost_usd=conservative_cost,
+        unpriced_models=tuple(
+            sorted(low_unpriced | high_unpriced | conservative_unpriced)
+        ),
+    )
+
+
+def _print_refiner_preflight(
+    model: str,
+    estimate: PreflightEstimate,
+    completed_cost: Decimal | None,
+    output: TerminalOutput,
+    *,
+    correction_round: bool,
+) -> None:
+    output.heading("Feature Refiner preflight")
+    output.line(f"Model: {model}")
+    output.line("Expected nominal calls: 1")
+    output.line(f"Rough estimated input tokens: {estimate.rough_input_tokens}")
+    output.line(f"Output-token allowance: {estimate.output_token_allowance}")
+    if estimate.estimated_cost_low_usd is None:
+        models = ", ".join(estimate.unpriced_models) or "unknown"
+        output.line(f"Estimated cost: unavailable ({models})")
+    else:
+        output.line(
+            "Estimated cost range USD: "
+            f"{_format_usd(estimate.estimated_cost_low_usd)}-"
+            f"{_format_usd(estimate.estimated_cost_high_usd)}"
+        )
+        output.line(
+            "Conservative next-call cost USD: "
+            f"{_format_usd(estimate.conservative_max_cost_usd)}"
+        )
+    if completed_cost is not None:
+        output.line(
+            "Completed refinement cost USD: "
+            f"{_format_usd(completed_cost)}"
+        )
+    if correction_round:
+        output.line(
+            "Data sent: original feature description, previous typed "
+            "interpretation, and your correction only"
+        )
+    else:
+        output.line("Data sent: feature description only")
+    output.line(f"Pricing snapshot: {DEFAULT_PRICING_SNAPSHOT.identifier}")
+
+
+def _enforce_refinement_call_cost_cap(
+    estimate: PreflightEstimate,
+    maximum: Decimal | None,
+    completed_cost: Decimal | None,
+) -> None:
+    if maximum is None:
+        return
+    if completed_cost is None:
+        raise CliError(
+            "The cumulative cost cap cannot be enforced because completed "
+            "Feature Refiner usage is unpriced.",
+            before_api_calls=True,
+        )
+    if estimate.conservative_max_cost_usd is None:
+        models = ", ".join(estimate.unpriced_models) or "unknown"
+        raise CliError(
+            "The Feature Refiner cost cap cannot be enforced because the "
+            f"pricing snapshot does not price: {models}.",
+            before_api_calls=True,
+        )
+    session_maximum = completed_cost + estimate.conservative_max_cost_usd
+    if session_maximum > maximum:
+        raise CliError(
+            "Feature Refiner cumulative conservative cost "
+            f"{_format_usd(session_maximum)} exceeds the configured session "
+            f"cap {_format_usd(maximum)}.",
+            before_api_calls=True,
+        )
+
+
+def _completed_refinement_cost(
+    rounds: Sequence[FeatureRefinementRound],
+) -> Decimal | None:
+    if not rounds:
+        return None
+    costs = [item.estimated_cost_usd for item in rounds]
+    if any(cost is None for cost in costs):
+        return None
+    return sum(
+        (cost for cost in costs if cost is not None),
+        Decimal("0"),
+    )
+
+
+def _refinement_cost_text(
+    cost: Decimal | None,
+    unpriced_models: Sequence[str],
+) -> str:
+    if cost is not None:
+        return f"estimated cost {_format_usd(cost)}"
+    models = ", ".join(unpriced_models) or "unknown"
+    return f"cost unpriced ({models})"
+
+
 def _estimate_budget_cost(
     budgets: dict[str, _RoleBudget],
     multiplier: Decimal,
@@ -1456,9 +2017,18 @@ def _preflight_rows(
 def _enforce_cost_cap(
     estimate: PreflightEstimate,
     maximum: Decimal | None,
+    *,
+    completed_cost: Decimal | None = Decimal("0"),
+    prior_usage_unavailable: bool = False,
 ) -> None:
     if maximum is None:
         return
+    if prior_usage_unavailable or completed_cost is None:
+        raise CliError(
+            "The cumulative session cost cap cannot be enforced because "
+            "completed Feature Refiner usage is unavailable or unpriced.",
+            before_api_calls=True,
+        )
     if estimate.conservative_max_cost_usd is None:
         models = ", ".join(estimate.unpriced_models) or "unknown"
         raise CliError(
@@ -1466,13 +2036,65 @@ def _enforce_cost_cap(
             f"does not price: {models}.",
             before_api_calls=True,
         )
-    if estimate.conservative_max_cost_usd > maximum:
+    session_maximum = completed_cost + estimate.conservative_max_cost_usd
+    if session_maximum > maximum:
+        if completed_cost == 0:
+            message = (
+                "Conservative preflight cost "
+                f"{_format_usd(estimate.conservative_max_cost_usd)} exceeds "
+                f"--max-cost-usd {_format_usd(maximum)}."
+            )
+        else:
+            message = (
+                "Cumulative conservative session cost "
+                f"{_format_usd(session_maximum)} exceeds --max-cost-usd "
+                f"{_format_usd(maximum)}."
+            )
         raise CliError(
-            "Conservative preflight cost "
-            f"{_format_usd(estimate.conservative_max_cost_usd)} exceeds "
-            f"--max-cost-usd {_format_usd(maximum)}.",
+            message,
             before_api_calls=True,
         )
+
+
+def _print_session_preflight(
+    downstream: PreflightEstimate,
+    refinement: FeatureRefinementRecord | None,
+    refinement_usage_unavailable: bool,
+    maximum: Decimal | None,
+    output: TerminalOutput,
+) -> None:
+    if refinement is None and not refinement_usage_unavailable:
+        return
+    output.heading("Session call and cost summary")
+    if refinement is not None:
+        output.line(
+            f"Feature Refiner completed calls: {refinement.refinement_rounds}"
+        )
+        output.line(
+            "Feature Refiner actual estimated cost USD: "
+            + (
+                _format_usd(refinement.estimated_cost_usd)
+                if refinement.estimated_cost_usd is not None
+                else "unpriced"
+            )
+        )
+    else:
+        output.line("Feature Refiner attempted usage: unavailable")
+    output.line(f"Downstream expected calls: {downstream.expected_calls}")
+    if refinement is not None:
+        output.line(
+            "Total session calls after completion: "
+            f"{refinement.refinement_rounds + downstream.expected_calls}"
+        )
+    else:
+        output.line("Total session calls after completion: unavailable")
+    if maximum is not None and refinement is not None:
+        completed = refinement.estimated_cost_usd
+        if completed is not None:
+            output.line(
+                "Remaining configured budget USD: "
+                f"{_format_usd(maximum - completed)}"
+            )
 
 
 def _read_feature_source(
@@ -1589,6 +2211,8 @@ def _write_mode_artifacts(
     generalist_execution: GeneralistExecution | None,
     output_root: Path,
     started_at: datetime,
+    *,
+    feature_refinement: FeatureRefinementRecord | None = None,
 ) -> tuple[str, Path, Path]:
     from council.evaluation import create_comparison_record
     from council.reporting import (
@@ -1609,6 +2233,7 @@ def _write_mode_artifacts(
             generalist_execution,
             output_root,
             started_at=started_at,
+            feature_refinement=feature_refinement,
         )
         return run_id, run_directory, _preferred_report_path(run_directory)
 
@@ -1622,7 +2247,11 @@ def _write_mode_artifacts(
     else:
         comparison = None
 
-    run_directory = write_run_artifacts(record, output_root)
+    run_directory = write_run_artifacts(
+        record,
+        output_root,
+        feature_refinement=feature_refinement,
+    )
     if comparison is not None:
         write_evaluation_artifacts(run_directory, comparison)
     return record.run_id, run_directory, _preferred_report_path(run_directory)
@@ -1644,14 +2273,24 @@ def _print_completion(
     generalist: GeneralistExecution | None,
     total_runtime_ms: float,
     output: TerminalOutput,
+    *,
+    feature_refinement: FeatureRefinementRecord | None = None,
+    refinement_usage_unavailable: bool = False,
 ) -> None:
+    usage_complete = (
+        not refinement_usage_unavailable
+        and (
+            feature_refinement is None
+            or feature_refinement.usage_complete
+        )
+    )
     council_usage = (
         council.telemetry.total_usage if council is not None else TokenUsage()
     )
     generalist_usage = (
         generalist.telemetry.usage if generalist is not None else TokenUsage()
     )
-    costs = [
+    costs: list[Decimal] = [
         value
         for value in (
             _council_cost(council),
@@ -1660,9 +2299,14 @@ def _print_completion(
         if value is not None
     ]
     expected_cost_count = int(council is not None) + int(generalist is not None)
+    if feature_refinement is not None:
+        if feature_refinement.estimated_cost_usd is not None:
+            costs.append(feature_refinement.estimated_cost_usd)
+        expected_cost_count += 1
     total_cost = (
         sum(costs, Decimal("0"))
         if len(costs) == expected_cost_count
+        and usage_complete
         else None
     )
 
@@ -1678,22 +2322,83 @@ def _print_completion(
     output.line(f"Council model calls: {council_usage.requests}")
     if generalist is not None:
         output.line(f"Generalist model calls: {generalist_usage.requests}")
+    refinement_usage = (
+        feature_refinement.telemetry.usage
+        if feature_refinement is not None
+        else TokenUsage()
+    )
+    if feature_refinement is not None:
+        output.line(
+            "Feature Refiner attempted calls: "
+            f"{feature_refinement.attempted_calls}"
+        )
+        output.line(
+            "Feature Refiner completed calls: "
+            f"{feature_refinement.refinement_rounds}"
+        )
+        output.line(
+            (
+                "Known Feature Refiner cost USD: "
+                if not feature_refinement.usage_complete
+                else "Feature Refiner estimated cost USD: "
+            )
+            + (
+                "unavailable"
+                if (
+                    not feature_refinement.usage_complete
+                    and not feature_refinement.rounds
+                )
+                else (
+                    _format_usd(feature_refinement.estimated_cost_usd)
+                    if feature_refinement.estimated_cost_usd is not None
+                    else "unpriced"
+                )
+            )
+        )
+    if not usage_complete:
+        output.warning(
+            "Feature Refiner failed-attempt usage is unavailable; session "
+            "call, token, and cost totals may be incomplete."
+        )
+    else:
+        output.line(
+            "Total session model calls: "
+            f"{council_usage.requests + generalist_usage.requests + (feature_refinement.refinement_rounds if feature_refinement is not None else 0)}"
+        )
     output.line(
         f"Actual input tokens: "
-        f"{council_usage.input_tokens + generalist_usage.input_tokens}"
+        f"{council_usage.input_tokens + generalist_usage.input_tokens + refinement_usage.input_tokens}"
     )
     output.line(
         f"Actual output tokens: "
-        f"{council_usage.output_tokens + generalist_usage.output_tokens}"
+        f"{council_usage.output_tokens + generalist_usage.output_tokens + refinement_usage.output_tokens}"
     )
     output.line(
         f"Actual total tokens: "
-        f"{council_usage.total_tokens + generalist_usage.total_tokens}"
+        f"{council_usage.total_tokens + generalist_usage.total_tokens + refinement_usage.total_tokens}"
     )
-    output.line(
-        "Actual estimated cost USD: "
-        + (_format_usd(total_cost) if total_cost is not None else "unavailable")
-    )
+    if usage_complete:
+        output.line(
+            "Actual estimated cost USD: "
+            + (
+                _format_usd(total_cost)
+                if total_cost is not None
+                else "unavailable"
+            )
+        )
+    else:
+        known_cost = sum(costs, Decimal("0")) if costs else Decimal("0")
+        output.line(f"Known estimated cost USD: {_format_usd(known_cost)}")
+        output.line("Overall session cost: incomplete")
+        output.line(
+            "Reason: "
+            + (
+                feature_refinement.usage_unavailable_reason
+                if feature_refinement is not None
+                and feature_refinement.usage_unavailable_reason
+                else "A Feature Refiner attempt did not return usage telemetry."
+            )
+        )
     output.line(f"Total runtime: {total_runtime_ms:.3f} ms")
     output.line(f"Report: {report_path}")
     output.line(f"Run directory: {run_directory}")

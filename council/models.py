@@ -246,6 +246,31 @@ class CouncilResult(BaseModel):
     director: DirectorResult
 
 
+class FeatureRefinerResult(BaseModel):
+    concise_interpretation: list[str] = Field(min_length=1)
+    refined_brief: str = Field(min_length=1)
+    unresolved_points: list[str] = Field(default_factory=list)
+    preserved_constraints: list[str] = Field(default_factory=list)
+
+    @field_validator(
+        "concise_interpretation",
+        "unresolved_points",
+        "preserved_constraints",
+    )
+    @classmethod
+    def reject_blank_list_items(cls, values: list[str]) -> list[str]:
+        if any(not value.strip() for value in values):
+            raise ValueError("feature-refinement list items must not be blank")
+        return values
+
+    @field_validator("refined_brief")
+    @classmethod
+    def reject_blank_refined_brief(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("refined brief must not be blank")
+        return value
+
+
 class TokenUsage(BaseModel):
     requests: int = Field(default=0, ge=0)
     input_tokens: int = Field(default=0, ge=0)
@@ -257,6 +282,106 @@ class RoleTelemetry(BaseModel):
     model: str
     duration_ms: float = Field(ge=0)
     usage: TokenUsage
+
+
+class FeatureRefinementExecution(BaseModel):
+    result: FeatureRefinerResult
+    telemetry: RoleTelemetry
+    estimated_cost_usd: Decimal | None
+    unpriced_models: list[str] = Field(default_factory=list)
+    pricing_snapshot_id: str
+
+
+class FeatureRefinementRound(BaseModel):
+    result: FeatureRefinerResult
+    user_correction: str | None = None
+    telemetry: RoleTelemetry
+    estimated_cost_usd: Decimal | None
+    unpriced_models: list[str] = Field(default_factory=list)
+    pricing_snapshot_id: str
+
+    @field_validator("user_correction")
+    @classmethod
+    def reject_blank_correction(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("user correction must not be blank")
+        return value
+
+
+class FeatureRefinementRecord(BaseModel):
+    original_feature: str = Field(min_length=1)
+    approved_refined_feature: str | None = None
+    concise_interpretation: list[str] = Field(default_factory=list)
+    unresolved_points: list[str] = Field(default_factory=list)
+    preserved_constraints: list[str] = Field(default_factory=list)
+    refinement_rounds: int = Field(default=0, ge=0)
+    rounds: list[FeatureRefinementRound] = Field(default_factory=list)
+    attempted_calls: int = Field(default=0, ge=0)
+    approved: bool
+    usage_complete: bool = True
+    usage_unavailable_reason: str | None = None
+    telemetry: RoleTelemetry
+    estimated_cost_usd: Decimal | None
+    unpriced_models: list[str] = Field(default_factory=list)
+    pricing_snapshot_id: str
+
+    @field_validator("original_feature")
+    @classmethod
+    def reject_blank_original_feature(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("original feature must not be blank")
+        return value
+
+    @model_validator(mode="after")
+    def validate_refinement_audit(self) -> "FeatureRefinementRecord":
+        if self.refinement_rounds != len(self.rounds):
+            raise ValueError("refinement round count does not match history")
+        # Phase 4A artifacts written before attempted_calls existed contain
+        # completed rounds only. Treat that absence as complete usage rather
+        # than inventing an unavailable attempt during backward-compatible
+        # loading.
+        if (
+            self.attempted_calls == 0
+            and self.refinement_rounds > 0
+            and self.usage_complete
+        ):
+            self.attempted_calls = self.refinement_rounds
+        if self.attempted_calls < self.refinement_rounds:
+            raise ValueError("attempted calls cannot be fewer than completed rounds")
+        if self.rounds:
+            latest = self.rounds[-1].result
+            if self.concise_interpretation != latest.concise_interpretation:
+                raise ValueError("concise interpretation must match latest round")
+            if self.unresolved_points != latest.unresolved_points:
+                raise ValueError("unresolved points must match latest round")
+            if self.preserved_constraints != latest.preserved_constraints:
+                raise ValueError("preserved constraints must match latest round")
+        elif (
+            self.concise_interpretation
+            or self.unresolved_points
+            or self.preserved_constraints
+        ):
+            raise ValueError("a failed first attempt cannot have an interpretation")
+        if self.approved:
+            if not self.rounds:
+                raise ValueError("approved refinement requires a completed round")
+            if not self.approved_refined_feature or not self.approved_refined_feature.strip():
+                raise ValueError("approved refinement requires an approved brief")
+        elif self.approved_refined_feature is not None:
+            raise ValueError("unapproved refinement cannot have an approved brief")
+        if self.usage_complete:
+            if self.usage_unavailable_reason is not None:
+                raise ValueError("complete usage cannot have an unavailable reason")
+            if self.attempted_calls != self.refinement_rounds:
+                raise ValueError("complete usage requires all attempts to be recorded")
+        elif not (
+            self.usage_unavailable_reason
+            and self.usage_unavailable_reason.strip()
+        ):
+            raise ValueError("incomplete usage requires an unavailable reason")
+        elif self.attempted_calls <= self.refinement_rounds:
+            raise ValueError("incomplete usage requires an unavailable attempt")
+        return self
 
 
 class CouncilTelemetry(BaseModel):

@@ -123,6 +123,7 @@ class Phase2CliTests(unittest.TestCase):
                 "",
                 "0.10",
                 "",
+                "",
             ]
         )
         output: list[str] = []
@@ -174,6 +175,7 @@ class Phase2CliTests(unittest.TestCase):
                 "",
                 "3",
                 "0.10",
+                "n",
                 "yes",
                 "3",
             ]

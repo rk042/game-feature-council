@@ -5,6 +5,7 @@ import unicodedata
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from uuid import uuid4
 
@@ -14,6 +15,7 @@ from council.models import (
     CouncilExecution,
     DirectorDecision,
     DirectorResult,
+    FeatureRefinementRecord,
     GeneralistExecution,
     HumanAction,
     HumanComparisonReview,
@@ -86,6 +88,7 @@ class ReviewArtifacts:
     run_record: RunRecord | None
     comparison: ComparisonRecord | None
     generalist: GeneralistExecution | None
+    feature_refinement: FeatureRefinementRecord | None
 
 
 def create_run_record(
@@ -117,7 +120,14 @@ def create_run_record(
 def write_run_artifacts(
     record: RunRecord,
     output_root: str | Path,
+    *,
+    feature_refinement: FeatureRefinementRecord | None = None,
 ) -> Path:
+    if feature_refinement is not None:
+        _validate_refinement_identity(
+            feature_refinement,
+            record.feature_input,
+        )
     run_directory = _create_run_directory(
         output_root,
         record.run_id,
@@ -166,12 +176,23 @@ def write_run_artifacts(
         run_directory / "run.json",
         record.model_dump(mode="json"),
     )
+    _write_feature_refinement(
+        run_directory,
+        feature_refinement,
+        record.feature_input,
+    )
     (run_directory / "report.md").write_text(
-        render_markdown_report(record),
+        render_markdown_report(
+            record,
+            feature_refinement=feature_refinement,
+        ),
         encoding="utf-8",
     )
     (run_directory / "report.html").write_text(
-        render_html_report(record),
+        render_html_report(
+            record,
+            feature_refinement=feature_refinement,
+        ),
         encoding="utf-8",
     )
     return run_directory
@@ -185,7 +206,10 @@ def write_generalist_artifacts(
     output_root: str | Path,
     *,
     started_at: datetime,
+    feature_refinement: FeatureRefinementRecord | None = None,
 ) -> Path:
+    if feature_refinement is not None:
+        _validate_refinement_identity(feature_refinement, feature_input)
     run_directory = _create_run_directory(
         output_root,
         run_id,
@@ -211,8 +235,19 @@ def write_generalist_artifacts(
         run_directory / "generalist.json",
         execution.model_dump(mode="json"),
     )
+    _write_feature_refinement(
+        run_directory,
+        feature_refinement,
+        feature_input,
+    )
     (run_directory / "report.md").write_text(
-        _render_generalist_report(run_id, feature_input, context, execution),
+        _render_generalist_report(
+            run_id,
+            feature_input,
+            context,
+            execution,
+            feature_refinement=feature_refinement,
+        ),
         encoding="utf-8",
     )
     (run_directory / "report.html").write_text(
@@ -222,6 +257,7 @@ def write_generalist_artifacts(
             context,
             execution,
             started_at=started_at,
+            feature_refinement=feature_refinement,
         ),
         encoding="utf-8",
     )
@@ -288,6 +324,10 @@ def update_run_with_human_decision(
         "report.html",
     )
     comparison = _read_optional_comparison(directory)
+    feature_refinement = _read_optional_feature_refinement(
+        directory,
+        record.feature_input,
+    )
     if comparison is not None:
         if comparison.council_run_id != record.run_id:
             raise RunArtifactError(
@@ -303,12 +343,17 @@ def update_run_with_human_decision(
         render_markdown_report(
             updated_record,
             comparison,
+            feature_refinement=feature_refinement,
         ),
         encoding="utf-8",
     )
     if html_report_path is not None:
         html_report_path.write_text(
-            render_html_report(updated_record, comparison),
+            render_html_report(
+                updated_record,
+                comparison,
+                feature_refinement=feature_refinement,
+            ),
             encoding="utf-8",
         )
     return updated_record
@@ -320,6 +365,10 @@ def write_evaluation_artifacts(
 ) -> None:
     directory = Path(run_directory).expanduser().resolve()
     record = _read_run_record(directory)
+    feature_refinement = _read_optional_feature_refinement(
+        directory,
+        record.feature_input,
+    )
     if comparison.council_run_id != record.run_id:
         raise RunArtifactError(
             "Comparison record does not belong to this council run."
@@ -341,7 +390,11 @@ def write_evaluation_artifacts(
         comparison.model_dump(mode="json"),
     )
     (directory / "report.md").write_text(
-        render_markdown_report(record, comparison),
+        render_markdown_report(
+            record,
+            comparison,
+            feature_refinement=feature_refinement,
+        ),
         encoding="utf-8",
     )
     html_report_path = _optional_existing_artifact_path(
@@ -350,7 +403,11 @@ def write_evaluation_artifacts(
     )
     if html_report_path is not None:
         html_report_path.write_text(
-            render_html_report(record, comparison),
+            render_html_report(
+                record,
+                comparison,
+                feature_refinement=feature_refinement,
+            ),
             encoding="utf-8",
         )
 
@@ -361,6 +418,10 @@ def update_comparison_with_human_review(
 ) -> ComparisonRecord:
     directory = Path(run_directory).expanduser().resolve()
     record = _read_run_record(directory)
+    feature_refinement = _read_optional_feature_refinement(
+        directory,
+        record.feature_input,
+    )
     comparison_path = _existing_artifact_path(directory, "comparison.json")
     report_path = _existing_artifact_path(directory, "report.md")
     html_report_path = _optional_existing_artifact_path(
@@ -391,12 +452,20 @@ def update_comparison_with_human_review(
     updated = comparison.model_copy(update={"human_review": human_review})
     _write_json(comparison_path, updated.model_dump(mode="json"))
     report_path.write_text(
-        render_markdown_report(record, updated),
+        render_markdown_report(
+            record,
+            updated,
+            feature_refinement=feature_refinement,
+        ),
         encoding="utf-8",
     )
     if html_report_path is not None:
         html_report_path.write_text(
-            render_html_report(record, updated),
+            render_html_report(
+                record,
+                updated,
+                feature_refinement=feature_refinement,
+            ),
             encoding="utf-8",
         )
     return updated
@@ -405,6 +474,8 @@ def update_comparison_with_human_review(
 def render_markdown_report(
     record: RunRecord,
     comparison: ComparisonRecord | None = None,
+    *,
+    feature_refinement: FeatureRefinementRecord | None = None,
 ) -> str:
     result = record.council_result
     director = result.director
@@ -427,10 +498,7 @@ def render_markdown_report(
         f"- Branch: `{record.repository_branch or 'detached HEAD'}`",
         f"- Tracked working tree dirty: {record.working_tree_dirty}",
         "",
-        "## Feature",
-        "",
-        record.feature_input,
-        "",
+        *_markdown_feature_lines(record.feature_input, feature_refinement),
         "## Director Recommendation",
         "",
         f"- Decision: **{director.decision.value}**",
@@ -512,6 +580,8 @@ def render_markdown_report(
         "",
         *_runtime_role_lines(record),
         "",
+        *_refinement_runtime_lines(feature_refinement, record, comparison),
+        "",
         *_comparison_report_lines(comparison),
         "## Human Decision",
         "",
@@ -524,6 +594,8 @@ def render_markdown_report(
 def render_html_report(
     record: RunRecord,
     comparison: ComparisonRecord | None = None,
+    *,
+    feature_refinement: FeatureRefinementRecord | None = None,
 ) -> str:
     from council.html_reporting import render_html_report as render
 
@@ -531,6 +603,7 @@ def render_html_report(
         record,
         comparison,
         risks_and_unknowns=_risks_and_unknowns(record),
+        feature_refinement=feature_refinement,
     )
 
 
@@ -541,6 +614,7 @@ def render_generalist_html_report(
     execution: GeneralistExecution,
     *,
     started_at: datetime,
+    feature_refinement: FeatureRefinementRecord | None = None,
 ) -> str:
     from council.html_reporting import render_generalist_html_report as render
 
@@ -550,6 +624,7 @@ def render_generalist_html_report(
         context,
         execution,
         started_at=started_at.isoformat(),
+        feature_refinement=feature_refinement,
     )
 
 
@@ -607,6 +682,20 @@ def _write_json(path: Path, payload: object) -> None:
     )
 
 
+def _write_feature_refinement(
+    directory: Path,
+    refinement: FeatureRefinementRecord | None,
+    evaluated_feature: str,
+) -> None:
+    if refinement is None:
+        return
+    _validate_refinement_identity(refinement, evaluated_feature)
+    _write_json(
+        directory / "feature_refinement.json",
+        refinement.model_dump(mode="json"),
+    )
+
+
 def _create_run_directory(
     output_root: str | Path,
     run_id: str,
@@ -643,6 +732,8 @@ def _render_generalist_report(
     feature_input: str,
     context: ContextBundle,
     execution: GeneralistExecution,
+    *,
+    feature_refinement: FeatureRefinementRecord | None = None,
 ) -> str:
     result = execution.result
     usage = execution.telemetry.usage
@@ -660,10 +751,7 @@ def _render_generalist_report(
             f"- Commit: `{context.commit_sha}`",
             f"- Tracked working tree dirty: {context.working_tree_dirty}",
             "",
-            "## Feature",
-            "",
-            feature_input,
-            "",
+            *_markdown_feature_lines(feature_input, feature_refinement),
             "## Recommendation",
             "",
             f"- Decision: **{result.decision.value}**",
@@ -679,6 +767,11 @@ def _render_generalist_report(
             f"- Total tokens: {usage.total_tokens}",
             f"- Estimated cost USD: {cost}",
             f"- Pricing snapshot: `{execution.pricing_snapshot_id}`",
+            "",
+            *_generalist_refinement_runtime_lines(
+                feature_refinement,
+                execution,
+            ),
             "",
             "## Human Decision",
             "",
@@ -699,6 +792,210 @@ def _is_within(path: Path, root: Path) -> bool:
 def _markdown_bullets(values: Iterable[str]) -> list[str]:
     items = [f"- {value}" for value in values]
     return items or ["- None"]
+
+
+def _markdown_feature_lines(
+    evaluated_feature: str,
+    refinement: FeatureRefinementRecord | None,
+) -> list[str]:
+    if refinement is None:
+        return ["## Feature", "", evaluated_feature, ""]
+    lines = [
+        "## Original Feature Request",
+        "",
+        refinement.original_feature,
+        "",
+        (
+            "## Approved AI Interpretation"
+            if refinement.approved
+            else "## AI Interpretation — Not Approved"
+        ),
+        "",
+    ]
+    if refinement.approved:
+        unresolved_lines = (
+            [
+                "",
+                "### Unresolved Before Repository Analysis",
+                "",
+                *_markdown_bullets(refinement.unresolved_points),
+            ]
+            if refinement.unresolved_points
+            else []
+        )
+        lines.extend(
+            [
+                "- Status: User approved",
+                "- AI-generated interpretation; manually review for mistakes.",
+                *_markdown_bullets(refinement.concise_interpretation),
+                *unresolved_lines,
+                "",
+                "### Preserved Constraints",
+                "",
+                *_markdown_bullets(refinement.preserved_constraints),
+                "",
+                "<details>",
+                "<summary>Approved refined feature brief evaluated downstream</summary>",
+                "",
+                evaluated_feature,
+                "",
+                "</details>",
+                "",
+            ]
+        )
+    else:
+        proposal_lines = (
+            [
+                "<details>",
+                "<summary>Latest proposed refined brief (not evaluated)</summary>",
+                "",
+                refinement.rounds[-1].result.refined_brief,
+                "",
+                "</details>",
+            ]
+            if refinement.rounds
+            else [
+                "- No interpretation completed because the Feature Refiner "
+                "attempt did not return a result.",
+            ]
+        )
+        lines.extend(
+            [
+                "- Status: AI interpretation was not approved; the original request was evaluated.",
+                "- The latest AI interpretation is preserved only for auditability.",
+                *(
+                    _markdown_bullets(refinement.concise_interpretation)
+                    if refinement.concise_interpretation
+                    else []
+                ),
+                "",
+                *proposal_lines,
+                "",
+            ]
+        )
+    return lines
+
+
+def _refinement_runtime_lines(
+    refinement: FeatureRefinementRecord | None,
+    record: RunRecord,
+    comparison: ComparisonRecord | None,
+) -> list[str]:
+    if refinement is None:
+        return []
+    generalist = comparison.generalist if comparison is not None else None
+    costs = [refinement.estimated_cost_usd, record.estimated_cost_usd]
+    if generalist is not None:
+        costs.append(generalist.estimated_cost_usd)
+    known_cost = (
+        _sum_complete_costs(*costs)
+        if refinement.usage_complete
+        else _sum_known_costs(*costs)
+    )
+    overall_tokens = (
+        refinement.telemetry.usage.total_tokens
+        + record.telemetry.total_usage.total_tokens
+        + (
+            generalist.telemetry.usage.total_tokens
+            if generalist is not None
+            else 0
+        )
+    )
+    lines = [
+        "### Feature Refiner / Session",
+        "",
+        f"- Refiner model: `{refinement.telemetry.model}`",
+        f"- Refiner attempted calls: {refinement.attempted_calls}",
+        f"- Refiner completed calls: {refinement.refinement_rounds}",
+        f"- Known Refiner tokens: {refinement.telemetry.usage.total_tokens}",
+        f"- Known Refiner cost USD: {_format_refinement_cost(refinement)}",
+        f"- Overall session tokens: {overall_tokens}",
+    ]
+    if refinement.usage_complete:
+        lines.append(
+            "- Overall estimated cost USD: "
+            + (str(known_cost) if known_cost is not None else "Unpriced")
+        )
+    else:
+        lines.extend(
+            [
+                "- Feature Refiner usage: Incomplete",
+                "- Known session cost USD: "
+                + (str(known_cost) if known_cost is not None else "Unpriced"),
+                "- Overall session cost: Incomplete / unavailable",
+                "- Reason: "
+                + (refinement.usage_unavailable_reason or "Usage unavailable."),
+            ]
+        )
+    return lines
+
+
+def _generalist_refinement_runtime_lines(
+    refinement: FeatureRefinementRecord | None,
+    execution: GeneralistExecution,
+) -> list[str]:
+    if refinement is None:
+        return []
+    costs = (
+        refinement.estimated_cost_usd,
+        execution.estimated_cost_usd,
+    )
+    known_cost = (
+        _sum_complete_costs(*costs)
+        if refinement.usage_complete
+        else _sum_known_costs(*costs)
+    )
+    lines = [
+        "### Feature Refiner / Session",
+        "",
+        f"- Refiner model: `{refinement.telemetry.model}`",
+        f"- Refiner attempted calls: {refinement.attempted_calls}",
+        f"- Refiner completed calls: {refinement.refinement_rounds}",
+        f"- Known Refiner tokens: {refinement.telemetry.usage.total_tokens}",
+        f"- Known Refiner cost USD: {_format_refinement_cost(refinement)}",
+        "- Overall session tokens: "
+        f"{refinement.telemetry.usage.total_tokens + execution.telemetry.usage.total_tokens}",
+    ]
+    if refinement.usage_complete:
+        lines.append(
+            "- Overall estimated cost USD: "
+            + (str(known_cost) if known_cost is not None else "Unpriced")
+        )
+    else:
+        lines.extend(
+            [
+                "- Feature Refiner usage: Incomplete",
+                "- Known session cost USD: "
+                + (str(known_cost) if known_cost is not None else "Unpriced"),
+                "- Overall session cost: Incomplete / unavailable",
+                "- Reason: "
+                + (refinement.usage_unavailable_reason or "Usage unavailable."),
+            ]
+        )
+    return lines
+
+
+def _sum_complete_costs(*values: Decimal | None) -> Decimal | None:
+    if any(value is None for value in values):
+        return None
+    return sum(
+        (value for value in values if value is not None),
+        Decimal("0"),
+    )
+
+
+def _sum_known_costs(*values: Decimal | None) -> Decimal | None:
+    known = [value for value in values if value is not None]
+    return sum(known, Decimal("0")) if known else None
+
+
+def _format_refinement_cost(refinement: FeatureRefinementRecord) -> str:
+    if not refinement.usage_complete and not refinement.rounds:
+        return "Unavailable"
+    if refinement.estimated_cost_usd is not None:
+        return str(refinement.estimated_cost_usd)
+    models = ", ".join(refinement.unpriced_models) or "unknown"
+    return f"Unpriced ({models})"
 
 
 def _format_effort_range(
@@ -872,6 +1169,43 @@ def _read_optional_comparison(directory: Path) -> ComparisonRecord | None:
         ) from error
 
 
+def _read_optional_feature_refinement(
+    directory: Path,
+    evaluated_feature: str,
+) -> FeatureRefinementRecord | None:
+    refinement_path = _optional_existing_artifact_path(
+        directory,
+        "feature_refinement.json",
+    )
+    if refinement_path is None:
+        return None
+    try:
+        refinement = FeatureRefinementRecord.model_validate_json(
+            refinement_path.read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError) as error:
+        raise RunArtifactError(
+            f"Unable to read feature refinement from: {refinement_path}"
+        ) from error
+    _validate_refinement_identity(refinement, evaluated_feature)
+    return refinement
+
+
+def _validate_refinement_identity(
+    refinement: FeatureRefinementRecord,
+    evaluated_feature: str,
+) -> None:
+    expected = (
+        refinement.approved_refined_feature
+        if refinement.approved
+        else refinement.original_feature
+    )
+    if expected != evaluated_feature:
+        raise RunArtifactError(
+            "Feature refinement does not match the canonical evaluated feature."
+        )
+
+
 def load_review_artifacts(
     output_root: str | Path,
     run_id: str,
@@ -895,6 +1229,10 @@ def load_review_artifacts(
             run_record=record,
             comparison=comparison,
             generalist=None,
+            feature_refinement=_read_optional_feature_refinement(
+                directory,
+                record.feature_input,
+            ),
         )
 
     comparison_path = directory / "comparison.json"
@@ -909,12 +1247,19 @@ def load_review_artifacts(
             f"Required artifact does not exist: {directory / 'run.json'}"
         )
 
-    generalist = _read_generalist_only_execution(directory, run_id)
+    generalist, feature_input = _read_generalist_only_execution(
+        directory,
+        run_id,
+    )
     return ReviewArtifacts(
         run_directory=directory,
         run_record=None,
         comparison=None,
         generalist=generalist,
+        feature_refinement=_read_optional_feature_refinement(
+            directory,
+            feature_input,
+        ),
     )
 
 
@@ -947,7 +1292,7 @@ def _resolve_existing_run_directory(
 def _read_generalist_only_execution(
     directory: Path,
     run_id: str,
-) -> GeneralistExecution:
+) -> tuple[GeneralistExecution, str]:
     input_path = _existing_artifact_path(directory, "input.json")
     context_path = _existing_artifact_path(directory, "context.json")
     generalist_path = _existing_artifact_path(directory, "generalist.json")
@@ -997,7 +1342,7 @@ def _read_generalist_only_execution(
         raise RunArtifactError(
             "Run artifacts cannot be reviewed inside the target repository."
         )
-    return generalist
+    return generalist, feature_input
 
 
 def _validate_comparison_identity(

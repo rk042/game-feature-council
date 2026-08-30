@@ -58,8 +58,14 @@ fallback is also supported:
 ```
 
 The wizard validates a Git repository, accepts a pasted multiline feature or
-UTF-8 feature file, selects Council/Generalist/both, builds the real preflight,
-and asks for explicit consent (default No). After consent, a live terminal
+UTF-8 feature file, and selects Council/Generalist/both. It can optionally send
+only the feature description to the AI Feature Refiner, show the interpretation,
+and require user approval before repository analysis. Refiner consent defaults
+to No; skipping it preserves the original feature unchanged. Refinement is a
+separate paid model call, its output can be wrong, and the original request is
+preserved with any user-approved canonical brief. Repository content is never
+sent to the Refiner. The wizard then builds the real repository preflight and
+asks for separate explicit consent (default No). After consent, a live terminal
 view shows stage status, elapsed time, completed-call token usage, and cost;
 redirected output uses plain operational lines. A completed interactive run
 can launch the existing offline review or safely open its report. New runs
@@ -83,6 +89,7 @@ Configure real runs with process-scoped PowerShell environment variables:
 $env:OPENAI_API_KEY = "..."
 $env:COUNCIL_SPECIALIST_MODEL = "gpt-5.4-nano"
 $env:COUNCIL_SYNTHESIS_MODEL = "gpt-5.4-nano"
+$env:COUNCIL_REFINER_MODEL = "gpt-5.4-nano" # optional
 ```
 
 Do not put the API key in committed files. These assignments last only for the
@@ -90,6 +97,9 @@ current process and its children. `review` needs none of these variables. A
 dry run needs the model configuration used by its selected mode, but no API
 key. A real run also requires `OPENAI_API_KEY`; Council and `both` modes require
 both model variables, while Generalist mode requires only the synthesis model.
+The interactive Feature Refiner uses `COUNCIL_REFINER_MODEL` when set and
+otherwise uses the exact `COUNCIL_SYNTHESIS_MODEL` value. Its completed cost is
+included in the same cumulative session cost cap as downstream analysis.
 The API key is never written to run artifacts or printed by the CLI.
 
 ## Feature input
@@ -103,8 +113,12 @@ problem, feature idea, goal, constraints, open questions, and explicitly
 missing decision thresholds.
 
 Supply exactly one feature source. A feature file must exist, be UTF-8 text, and
-contain non-whitespace content. The root wizard collects the same inputs
-interactively without changing their content.
+contain non-whitespace content. Scripted `run` commands keep passing that exact
+text unchanged and never invoke the Refiner. In the root wizard, the user may
+instead approve an AI-refined canonical brief; that exact approved brief is
+then shared by Context Builder, Council, and Generalist. Refined runs add
+`feature_refinement.json`, while `input.json` continues to hold the canonical
+feature actually evaluated.
 
 ## Dry run
 
