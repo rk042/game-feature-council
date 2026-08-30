@@ -179,6 +179,25 @@ class EvaluationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(calls, 1)
 
+    async def test_generalist_rejects_council_supplemental_evidence(self) -> None:
+        context = self._context()
+        invalid_generalist = DIRECTOR.model_copy(
+            update={"evidence_ids": ["resolver-repo-001"]}
+        )
+
+        async def execute(_agent: FakeAgent, _input_text: str):
+            return invalid_generalist
+
+        with patch(
+            "council.evaluation.create_generalist_agent",
+            return_value=FakeAgent("gpt-5.4-nano"),
+        ):
+            with self.assertRaisesRegex(
+                EvaluationError,
+                "Generalist result.*resolver-repo-001",
+            ):
+                await run_generalist(FEATURE, context, execute)
+
     def test_comparison_enforces_same_feature_and_context(self) -> None:
         context = self._context()
         council_run = self._run_record(context)

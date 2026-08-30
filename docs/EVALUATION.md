@@ -13,7 +13,8 @@ receive:
 - the exact same repository identity and tracked-working-tree state;
 - the exact same evidence manifest and context contents.
 
-The Generalist cannot see specialist, Producer, or Director outputs. Before a
+The Generalist cannot see specialist, Evidence Resolver, Producer, or Director outputs,
+including any Resolver supplemental evidence. Before a
 comparison record is accepted, the system verifies feature and context
 identity, including hashes and the evidence manifest. This isolates the
 evaluation as much as practical: the primary treatment is structured Council

@@ -15,6 +15,8 @@ from council.models import (
     CouncilExecution,
     DirectorDecision,
     DirectorResult,
+    EvidenceResolverRecord,
+    ResolutionStatus,
     FeatureRefinementRecord,
     GeneralistExecution,
     HumanAction,
@@ -43,6 +45,9 @@ EXPECTED_ARTIFACT_FILES = frozenset(
         "report.md",
         "report.html",
     }
+)
+EXPECTED_RESOLVED_COUNCIL_ARTIFACT_FILES = (
+    EXPECTED_ARTIFACT_FILES | {"evidence_resolver.json"}
 )
 EXPECTED_EVALUATION_ARTIFACT_FILES = EXPECTED_ARTIFACT_FILES | {
     "generalist.json",
@@ -73,6 +78,8 @@ _ROLE_ORDER = (
     "technical",
     "analytics",
     "scope_risk",
+    "resolver_pass_1",
+    "resolver_pass_2",
     "producer",
     "director",
 )
@@ -128,6 +135,11 @@ def write_run_artifacts(
             feature_refinement,
             record.feature_input,
         )
+    if record.council_result.evidence_resolver is not None:
+        _validate_resolver_identity(
+            record.council_result.evidence_resolver,
+            record.feature_input,
+        )
     run_directory = _create_run_directory(
         output_root,
         record.run_id,
@@ -164,6 +176,11 @@ def write_run_artifacts(
         run_directory / "scope_risk.json",
         result.scope_risk.model_dump(mode="json"),
     )
+    if result.evidence_resolver is not None:
+        _write_json(
+            run_directory / "evidence_resolver.json",
+            result.evidence_resolver.model_dump(mode="json"),
+        )
     _write_json(
         run_directory / "producer.json",
         result.producer.model_dump(mode="json"),
@@ -316,6 +333,28 @@ def update_run_with_human_decision(
         raise RunArtifactError(
             "Product/Director human review is already completed."
         )
+    resolver_path = _optional_existing_artifact_path(
+        directory,
+        "evidence_resolver.json",
+    )
+    if resolver_path is not None:
+        if record.council_result.evidence_resolver is None:
+            raise RunArtifactError(
+                "Resolver artifact exists but the persisted Council result has no resolver data."
+            )
+        try:
+            persisted_resolver = EvidenceResolverRecord.model_validate_json(
+                resolver_path.read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError) as error:
+            raise RunArtifactError(
+                f"Unable to read Evidence Resolver artifact from: {resolver_path}"
+            ) from error
+        if persisted_resolver != record.council_result.evidence_resolver:
+            raise RunArtifactError(
+                "Resolver artifact does not match the persisted Council result."
+            )
+        _validate_resolver_identity(persisted_resolver, record.feature_input)
 
     run_path = _existing_artifact_path(directory, "run.json")
     report_path = _existing_artifact_path(directory, "report.md")
@@ -534,13 +573,7 @@ def render_markdown_report(
         "",
         *_markdown_bullets(producer.disagreements),
         "",
-        "## Risks / Unknowns",
-        "",
-        *_markdown_bullets(_risks_and_unknowns(record)),
-        "",
-        _director_questions_heading(record),
-        "",
-        *_markdown_bullets(_director_question_lines(record)),
+        *_resolver_markdown_lines(result.evidence_resolver, record),
         "",
         "## Decision Conditions",
         "",
@@ -562,11 +595,24 @@ def render_markdown_report(
         "",
         "## Evidence / Grounding",
         "",
+        "### Initial Context Evidence",
+        "",
         f"- Repository SHA: `{context.commit_sha}`",
         f"- Tracked working tree dirty: {context.working_tree_dirty}",
         *_markdown_bullets(
             f"`{item.id}` — `{item.file_path}`"
             for item in context.evidence
+        ),
+        *(
+            [
+                "",
+                "### Downstream Council Evidence References",
+                "",
+                "- Producer: " + ", ".join(producer.evidence_ids),
+                "- Director: " + ", ".join(director.evidence_ids),
+            ]
+            if producer.evidence_ids or director.evidence_ids
+            else []
         ),
         "",
         "## Runtime",
@@ -603,6 +649,7 @@ def render_html_report(
         record,
         comparison,
         risks_and_unknowns=_risks_and_unknowns(record),
+        evidence_resolver=record.council_result.evidence_resolver,
         feature_refinement=feature_refinement,
     )
 
@@ -694,6 +741,17 @@ def _write_feature_refinement(
         directory / "feature_refinement.json",
         refinement.model_dump(mode="json"),
     )
+
+
+def _validate_resolver_identity(
+    resolver: EvidenceResolverRecord,
+    feature_input: str,
+) -> None:
+    expected = hashlib.sha256(feature_input.encode("utf-8")).hexdigest()
+    if resolver.feature_sha256 != expected:
+        raise RunArtifactError(
+            "Resolver feature identity does not match the evaluated feature."
+        )
 
 
 def _create_run_directory(
@@ -1034,6 +1092,94 @@ def _risks_and_unknowns(record: RunRecord) -> list[str]:
         for unknown in specialist.unknowns:
             retain("Unknown", unknown)
     return values
+
+
+def _resolver_markdown_lines(
+    resolver: EvidenceResolverRecord | None,
+    record: RunRecord,
+) -> list[str]:
+    """Render resolver output only when a new resolved-run artifact exists."""
+    if resolver is None:
+        return [
+            "## Risks / Unknowns",
+            "",
+            *_markdown_bullets(_risks_and_unknowns(record)),
+            "",
+            _director_questions_heading(record),
+            "",
+            *_markdown_bullets(_director_question_lines(record)),
+            "",
+        ]
+
+    counts = {
+        status: sum(item.status == status for item in resolver.concerns)
+        for status in ResolutionStatus
+    }
+    lines = [
+        "## Evidence Resolution Summary",
+        "",
+        f"- Source concerns: {len(resolver.source_concerns)}",
+        f"- Consolidated concerns: {len(resolver.concerns)}",
+        f"- Resolved from repository: {counts[ResolutionStatus.RESOLVED_FROM_REPOSITORY]}",
+        f"- Mitigated: {counts[ResolutionStatus.MITIGATED]}",
+        f"- Requires experiment: {counts[ResolutionStatus.REQUIRES_EXPERIMENT]}",
+        f"- Human Product decisions: {counts[ResolutionStatus.HUMAN_PRODUCT_DECISION]}",
+        f"- Human repository help: {counts[ResolutionStatus.HUMAN_REPOSITORY_HELP]}",
+        "- Source concerns remain in specialist artifacts and evidence_resolver.json.",
+        "",
+    ]
+    sections = (
+        (ResolutionStatus.RESOLVED_FROM_REPOSITORY, "Resolved from Repository"),
+        (ResolutionStatus.MITIGATED, "Mitigated Risks"),
+        (ResolutionStatus.REQUIRES_EXPERIMENT, "Requires Experiment"),
+        (ResolutionStatus.HUMAN_PRODUCT_DECISION, "Human Input Required"),
+        (ResolutionStatus.HUMAN_REPOSITORY_HELP, "Human Input Required"),
+    )
+    rendered_human_heading = False
+    for status, heading in sections:
+        concerns = [item for item in resolver.concerns if item.status == status]
+        if not concerns:
+            continue
+        if heading == "Human Input Required" and rendered_human_heading:
+            pass
+        else:
+            lines.extend((f"## {heading}", ""))
+            if heading == "Human Input Required":
+                rendered_human_heading = True
+        for concern in concerns:
+            lines.extend((f"### {concern.canonical_concern}", ""))
+            lines.append(f"- Status: {concern.status.value}")
+            lines.append("- Sources: " + ", ".join(concern.source_concern_ids))
+            if concern.resolution:
+                lines.append(f"- Resolution: {concern.resolution}")
+            if concern.evidence_ids:
+                lines.append("- Evidence: " + ", ".join(concern.evidence_ids))
+            if concern.recommended_mitigation:
+                lines.append(f"- Recommended mitigation: {concern.recommended_mitigation}")
+            if concern.residual_risk:
+                lines.append(f"- Residual risk: {concern.residual_risk}")
+            if concern.why_unresolved:
+                lines.append(f"- Why unresolved: {concern.why_unresolved}")
+            if concern.how_to_answer:
+                lines.append(f"- How to answer: {concern.how_to_answer}")
+            if concern.human_question:
+                lines.append(f"- Human question: {concern.human_question}")
+            lines.append("")
+    if not rendered_human_heading:
+        lines.extend(("## Human Input Required", "", "- No additional clarification required before human decision review.", ""))
+    lines.extend(("## Resolver Supplemental Evidence", ""))
+    if resolver.supplemental_evidence:
+        lines.extend(
+            f"- `{item.id}` — `{item.file_path}` (matched: {', '.join(item.matched_terms) or 'none'})"
+            for item in resolver.supplemental_evidence
+        )
+    else:
+        lines.append("- None")
+    if resolver.lookup_limitations:
+        lines.extend(("", "### Lookup Limitations", ""))
+        lines.extend(_markdown_bullets(resolver.lookup_limitations))
+    lines.append("")
+    return lines
 
 
 def _obvious_report_duplicate(candidate: str, retained: str) -> bool:

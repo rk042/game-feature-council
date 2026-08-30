@@ -9,6 +9,8 @@ from council.models import (
     ComparisonRecord,
     ContextBundle,
     DirectorResult,
+    EvidenceResolverRecord,
+    ResolutionStatus,
     FeatureRefinementRecord,
     GeneralistExecution,
     RoleTelemetry,
@@ -23,6 +25,8 @@ ROLE_ORDER = (
     "technical",
     "analytics",
     "scope_risk",
+    "resolver_pass_1",
+    "resolver_pass_2",
     "producer",
     "director",
 )
@@ -31,6 +35,8 @@ ROLE_LABELS = {
     "technical": "Technical",
     "analytics": "Analytics",
     "scope_risk": "Scope / Risk",
+    "resolver_pass_1": "Evidence Resolver",
+    "resolver_pass_2": "Evidence Resolver finalizing",
     "producer": "Producer",
     "director": "Director",
     "generalist": "Generalist",
@@ -40,6 +46,8 @@ ROLE_ACCENTS = {
     "technical": "blue",
     "analytics": "cyan",
     "scope_risk": "amber",
+    "resolver_pass_1": "green",
+    "resolver_pass_2": "green",
     "producer": "pink",
     "director": "green",
     "generalist": "slate",
@@ -61,6 +69,7 @@ def render_html_report(
     comparison: ComparisonRecord | None = None,
     *,
     risks_and_unknowns: Iterable[str] = (),
+    evidence_resolver: EvidenceResolverRecord | None = None,
     feature_refinement: FeatureRefinementRecord | None = None,
 ) -> str:
     result = record.council_result
@@ -89,6 +98,11 @@ def render_html_report(
             ("human-review", "Human Review"),
         ]
     )
+    if evidence_resolver is not None:
+        sections = [
+            (section_id, "Evidence Resolution" if section_id == "risks" else label)
+            for section_id, label in sections
+        ]
 
     body = "".join(
         [
@@ -105,6 +119,7 @@ def render_html_report(
                 director,
                 record.telemetry.roles.get("director"),
                 questions_resolved=record.human_decision is not None,
+                resolver_present=evidence_resolver is not None,
             ),
             _workflow_section(
                 director,
@@ -133,7 +148,11 @@ def render_html_report(
                     ),
                 },
             ),
-            _risks_section(risks_and_unknowns),
+            (
+                _evidence_resolution_section(evidence_resolver)
+                if evidence_resolver is not None
+                else _risks_section(risks_and_unknowns)
+            ),
             _evidence_section(result.context, _specialist_mapping(record)),
             _human_review_section(record, comparison),
             _footer(record.pricing_snapshot_id),
@@ -528,15 +547,16 @@ def _director_section(
     telemetry: RoleTelemetry | None,
     *,
     questions_resolved: bool,
+    resolver_present: bool = False,
 ) -> str:
     rationale = _text_list(director.rationale)
-    question_values = director.human_decisions_required
+    question_values = [] if resolver_present else director.human_decisions_required
     if questions_resolved:
         question_values = [
             f"Resolved: {question}"
             for question in question_values
         ]
-    questions = _text_list(question_values)
+    questions = _text_list(question_values) if question_values else '<p class="not-available">See Evidence Resolution for genuine human input.</p>'
     questions_heading = (
         "Director Questions - Resolved by Human Decision"
         if questions_resolved
@@ -550,6 +570,7 @@ def _director_section(
   <div class="badge">Confidence: {_h(director.confidence.value)}</div>
   <p>{_h(director.confidence_reason)}</p>
   <p><b>Effort:</b> {_h(_effort(director.effort.developer_days_min, director.effort.developer_days_max))} | <b>Effort confidence:</b> {_h(director.effort.confidence.value)} | {_h(director.effort.basis)}</p>
+  {f'<p><b>Director evidence:</b> {_evidence_chips(director.evidence_ids)}</p>' if director.evidence_ids else ''}
   {_role_telemetry(telemetry)}
   <div class="two-column">
     <div><h3>Rationale</h3>{rationale}</div>
@@ -628,6 +649,8 @@ def _architecture_diagram(
         council = """
 <div class="architecture-lane">
   <div class="arch-group"><b>Specialists</b><span>Game Design</span><span>Technical</span><span>Analytics</span><span>Scope / Risk</span></div>
+  <span class="arrow" aria-hidden="true">&rarr;</span>
+  <div class="arch-node">Evidence Resolver</div>
   <span class="arrow" aria-hidden="true">&rarr;</span>
   <div class="arch-node">Producer</div>
   <span class="arrow" aria-hidden="true">&rarr;</span>
@@ -1000,6 +1023,59 @@ def _risks_section(
     if not cards:
         cards = '<li class="not-available">Not available</li>'
     return f'<section id="risks"><h2>{_h(title)}</h2><ol class="risk-list">{cards}</ol><p class="section-note">No probability or impact score is inferred.</p></section>'
+
+
+def _evidence_resolution_section(resolver: EvidenceResolverRecord) -> str:
+    counts = {
+        status: sum(item.status == status for item in resolver.concerns)
+        for status in ResolutionStatus
+    }
+    summary = "".join(
+        f'<div class="metric"><span>{_h(label)}</span><strong>{count}</strong></div>'
+        for label, count in (
+            ("Source concerns", len(resolver.source_concerns)),
+            ("Consolidated concerns", len(resolver.concerns)),
+            ("Resolved from repository", counts[ResolutionStatus.RESOLVED_FROM_REPOSITORY]),
+            ("Mitigated", counts[ResolutionStatus.MITIGATED]),
+            ("Require experiment", counts[ResolutionStatus.REQUIRES_EXPERIMENT]),
+            ("Human input required", counts[ResolutionStatus.HUMAN_PRODUCT_DECISION] + counts[ResolutionStatus.HUMAN_REPOSITORY_HELP]),
+        )
+    )
+    cards = "".join(_resolved_concern_card(item) for item in resolver.concerns)
+    supplemental = "".join(
+        f'<article class="evidence-item"><code>{_h(item.id)}</code><strong>{_h(item.file_path)}</strong><small>Matched: {_h(", ".join(item.matched_terms) or "none")}</small></article>'
+        for item in resolver.supplemental_evidence
+    ) or '<p class="not-available">No supplemental repository evidence selected.</p>'
+    limitations = "".join(f"<li>{_h(item)}</li>" for item in resolver.lookup_limitations)
+    return f"""
+<section id="risks">
+  <div class="section-heading"><h2>Evidence Resolution</h2><p>Consolidated from deterministic specialist concern provenance.</p></div>
+  <div class="metric-grid">{summary}</div>
+  <div class="risk-list">{cards or '<p class="not-available">No source concerns were collected.</p>'}</div>
+  <h3>Resolver Supplemental Evidence</h3>
+  <div class="evidence-grid">{supplemental}</div>
+  {f'<h4>Lookup limitations</h4><ul class="finding-list">{limitations}</ul>' if limitations else ''}
+</section>
+"""
+
+
+def _resolved_concern_card(concern) -> str:
+    details = (
+        ("Resolution", concern.resolution),
+        ("Evidence", ", ".join(concern.evidence_ids) if concern.evidence_ids else None),
+        ("Recommended mitigation", concern.recommended_mitigation),
+        ("Residual risk", concern.residual_risk),
+        ("Why unresolved", concern.why_unresolved),
+        ("How to answer", concern.how_to_answer),
+        ("Human question", concern.human_question),
+        ("Sources", ", ".join(concern.source_concern_ids)),
+    )
+    fields = "".join(
+        f"<dt>{_h(label)}</dt><dd>{_h(value)}</dd>"
+        for label, value in details
+        if value
+    )
+    return f'<article class="card"><span class="badge">{_h(concern.status.value)}</span><h3>{_h(concern.canonical_concern)}</h3><dl class="facts">{fields}</dl></article>'
 
 
 def _evidence_section(

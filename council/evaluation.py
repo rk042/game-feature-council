@@ -56,6 +56,10 @@ async def run_generalist(
     clock: MonotonicClock = perf_counter,
     progress_listener: ProgressListener | None = None,
 ) -> GeneralistExecution:
+    from council.context import (
+        ContextBuilderError,
+        validate_repository_evidence_ids,
+    )
     from council.orchestrator import (
         CouncilOrchestrationError,
         _execute_agent,
@@ -79,6 +83,15 @@ async def run_generalist(
         )
     except CouncilOrchestrationError as error:
         raise EvaluationError(f"Generalist execution failed: {error}") from error
+    try:
+        # Generalist fairness deliberately permits only the initial canonical
+        # ContextBundle evidence, never Council supplemental lookup evidence.
+        validate_repository_evidence_ids(result.evidence_ids, context)
+    except ContextBuilderError as error:
+        raise EvaluationError(
+            "Invalid repository evidence reference in Generalist result: "
+            f"{error}"
+        ) from error
 
     cost = estimate_cost({"generalist": telemetry}, pricing)
     return GeneralistExecution(

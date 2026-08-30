@@ -118,10 +118,10 @@ class CliTests(unittest.TestCase):
         self.assertFalse(default.yes)
         self.assertIsNone(default.max_cost_usd)
 
-        for mode, expected_calls in (
-            ("council", 6),
-            ("generalist", 1),
-            ("both", 7),
+        for mode, minimum_calls, maximum_calls in (
+            ("council", 7, 8),
+            ("generalist", 1, 1),
+            ("both", 8, 9),
         ):
             with self.subTest(mode=mode):
                 args = parse_args(
@@ -146,7 +146,8 @@ class CliTests(unittest.TestCase):
                     None if mode == "generalist" else "gpt-5.4-nano",
                     "gpt-5.4-nano",
                 )
-                self.assertEqual(estimate.expected_calls, expected_calls)
+                self.assertEqual(estimate.minimum_calls, minimum_calls)
+                self.assertEqual(estimate.expected_calls, maximum_calls)
 
     def test_missing_and_empty_feature_input_fail_before_context(self) -> None:
         output: list[str] = []
@@ -371,7 +372,7 @@ class CliTests(unittest.TestCase):
                 "Specialist model: gpt-5.4-nano",
                 "Synthesis model: gpt-5.4-nano",
                 "Requested mode: both",
-                "Expected nominal model calls: 7",
+                "Expected nominal model calls: 8-9",
                 "Estimated cost range USD:",
                 "Conservative maximum cost USD:",
                 "No API calls or run artifacts were created",
@@ -600,7 +601,7 @@ class CliTests(unittest.TestCase):
                 EXPECTED_EVALUATION_ARTIFACT_FILES,
             )
             rendered = "\n".join(output)
-            self.assertIn("Expected nominal model calls: 7", rendered)
+            self.assertIn("Expected nominal model calls: 8-9", rendered)
             self.assertIn("Council model calls: 6", rendered)
             self.assertIn("Generalist model calls: 1", rendered)
             self.assertIn("Human comparison status: Pending", rendered)

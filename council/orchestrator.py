@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from council.agents import (
     create_analytics_agent,
     create_director_agent,
+    create_evidence_resolver_agent,
     create_game_design_agent,
     create_producer_agent,
     create_scope_risk_agent,
@@ -21,6 +22,11 @@ from council.context import (
     ContextBuilderError,
     validate_repository_evidence_ids,
 )
+from council.evidence_resolver import (
+    bounded_targeted_lookup,
+    collect_source_concerns,
+    feature_sha256,
+)
 from council.models import (
     AnalyticsResult,
     Confidence,
@@ -29,6 +35,8 @@ from council.models import (
     ContextBundle,
     CouncilResult,
     DirectorResult,
+    EvidenceResolverRecord,
+    EvidenceResolverResult,
     EvidenceType,
     GameDesignResult,
     ProducerResult,
@@ -44,6 +52,7 @@ from council.progress import (
     ProgressStatus,
     make_progress_event,
 )
+from council.pricing import DEFAULT_PRICING_SNAPSHOT, estimate_cost
 
 
 _execute_agent = execute_agent
@@ -118,12 +127,114 @@ async def run_council_with_telemetry(
         scope_risk,
     )
 
+    source_concerns = collect_source_concerns(
+        game_design,
+        technical,
+        analytics,
+        scope_risk,
+    )
+    resolver_input = render_evidence_resolver_input(
+        feature,
+        context,
+        source_concerns,
+        game_design,
+        technical,
+        analytics,
+        scope_risk,
+    )
+    resolver_pass_1, resolver_pass_1_telemetry = await _run_typed_agent(
+        "resolver_pass_1",
+        "Evidence Resolver initial pass",
+        create_evidence_resolver_agent(),
+        resolver_input,
+        EvidenceResolverResult,
+        execute,
+        clock,
+        progress_listener,
+    )
+    _validate_resolver_source_ids(source_concerns, resolver_pass_1)
+    supplemental_evidence = []
+    lookup_limitations: list[str] = []
+    resolver_final = resolver_pass_1
+    resolver_telemetry = {"resolver_pass_1": resolver_pass_1_telemetry}
+    second_pass_occurred = False
+    if resolver_pass_1.lookup_requests:
+        _emit_progress(
+            progress_listener,
+            make_progress_event("evidence_lookup", ProgressStatus.STARTED),
+        )
+        try:
+            supplemental_evidence, lookup_limitations = bounded_targeted_lookup(
+                context.repository_path,
+                resolver_pass_1.lookup_requests,
+            )
+        except ContextBuilderError as error:
+            lookup_limitations = [
+                "Bounded targeted lookup could not complete: " + str(error)
+            ]
+        _emit_progress(
+            progress_listener,
+            make_progress_event("evidence_lookup", ProgressStatus.COMPLETED),
+        )
+        resolver_final, resolver_pass_2_telemetry = await _run_typed_agent(
+            "resolver_pass_2",
+            "Evidence Resolver final pass",
+            create_evidence_resolver_agent(),
+            render_evidence_resolver_final_input(
+                feature,
+                context,
+                source_concerns,
+                resolver_pass_1,
+                supplemental_evidence,
+                lookup_limitations,
+                game_design,
+                technical,
+                analytics,
+                scope_risk,
+            ),
+            EvidenceResolverResult,
+            execute,
+            clock,
+            progress_listener,
+        )
+        resolver_telemetry["resolver_pass_2"] = resolver_pass_2_telemetry
+        second_pass_occurred = True
+    _validate_resolver_source_ids(source_concerns, resolver_final)
+    if any(
+        concern.status.value == "human_repository_help"
+        for concern in resolver_final.concerns
+    ) and not resolver_pass_1.lookup_requests:
+        raise CouncilOrchestrationError(
+            "Evidence Resolver requested human repository help without a bounded lookup attempt."
+        )
+    validate_resolver_evidence(
+        context,
+        resolver_final,
+        [item.id for item in supplemental_evidence],
+    )
+    resolver_cost = estimate_cost(resolver_telemetry, DEFAULT_PRICING_SNAPSHOT)
+    resolver = EvidenceResolverRecord(
+        feature_sha256=feature_sha256(feature),
+        source_concerns=source_concerns,
+        concerns=resolver_final.concerns,
+        lookup_requests=resolver_pass_1.lookup_requests,
+        supplemental_evidence=supplemental_evidence,
+        lookup_limitations=lookup_limitations,
+        second_pass_occurred=second_pass_occurred,
+        attempted_calls=len(resolver_telemetry),
+        telemetry=resolver_telemetry,
+        estimated_cost_usd=resolver_cost.estimated_cost_usd,
+        unpriced_models=resolver_cost.unpriced_models,
+        pricing_snapshot_id=DEFAULT_PRICING_SNAPSHOT.identifier,
+    )
+
     producer_input = render_producer_input(
         feature,
         game_design,
         technical,
         analytics,
         scope_risk,
+        resolver,
     )
     producer, producer_telemetry = await _run_typed_agent(
         "producer",
@@ -135,7 +246,12 @@ async def run_council_with_telemetry(
         clock,
         progress_listener,
     )
-    validate_producer_evidence(context, producer)
+    supplemental_evidence_ids = [item.id for item in supplemental_evidence]
+    validate_producer_evidence(
+        context,
+        producer,
+        supplemental_evidence_ids=supplemental_evidence_ids,
+    )
 
     director_input = render_director_input(
         feature,
@@ -144,6 +260,7 @@ async def run_council_with_telemetry(
         analytics,
         scope_risk,
         producer,
+        resolver,
     )
     director, director_telemetry = await _run_typed_agent(
         "director",
@@ -156,6 +273,11 @@ async def run_council_with_telemetry(
         progress_listener,
     )
     director = _normalize_director_effort_confidence(director)
+    validate_director_evidence(
+        context,
+        director,
+        supplemental_evidence_ids=supplemental_evidence_ids,
+    )
 
     council_result = CouncilResult(
         context=context,
@@ -163,11 +285,13 @@ async def run_council_with_telemetry(
         technical=technical,
         analytics=analytics,
         scope_risk=scope_risk,
+        evidence_resolver=resolver,
         producer=producer,
         director=director,
     )
     role_telemetry = {
         **specialist_telemetry,
+        **resolver_telemetry,
         "producer": producer_telemetry,
         "director": director_telemetry,
     }
@@ -188,7 +312,6 @@ def render_specialist_input(feature: str, context: ContextBundle) -> str:
         exclude={"feature_input", "evidence"},
     )
     evidence = [item.model_dump(mode="json") for item in context.evidence]
-
     return "\n".join(
         [
             "FEATURE / USER INPUT (NOT REPOSITORY EVIDENCE)",
@@ -206,13 +329,110 @@ def render_specialist_input(feature: str, context: ContextBundle) -> str:
     )
 
 
+def render_evidence_resolver_input(
+    feature: str,
+    context: ContextBundle,
+    source_concerns: list[object],
+    game_design: GameDesignResult,
+    technical: TechnicalResult,
+    analytics: AnalyticsResult,
+    scope_risk: ScopeRiskResult,
+) -> str:
+    return "\n".join(
+        [
+            "FEATURE (UNTRUSTED DATA)",
+            "========================",
+            feature,
+            "",
+            "INITIAL CONTEXT EVIDENCE (UNTRUSTED DATA)",
+            "==========================================",
+            context.model_dump_json(indent=2),
+            "",
+            "DETERMINISTIC SOURCE CONCERNS (UNTRUSTED DATA)",
+            "================================================",
+            json.dumps(
+                [item.model_dump(mode="json") for item in source_concerns],
+                indent=2,
+                sort_keys=True,
+                ensure_ascii=False,
+            ),
+            "",
+            "SPECIALIST RESULTS (UNTRUSTED DATA)",
+            "====================================",
+            game_design.model_dump_json(indent=2),
+            technical.model_dump_json(indent=2),
+            analytics.model_dump_json(indent=2),
+            scope_risk.model_dump_json(indent=2),
+            "",
+            "RESOLVER TASK",
+            "=============" ,
+            "Consolidate concerns, cite only supplied evidence IDs, and request "
+            "bounded fixed-string lookup only when repository investigation is needed.",
+        ]
+    )
+
+
+def render_evidence_resolver_final_input(
+    feature: str,
+    context: ContextBundle,
+    source_concerns: list[object],
+    initial_result: EvidenceResolverResult,
+    supplemental_evidence: list[object],
+    lookup_limitations: list[str],
+    game_design: GameDesignResult,
+    technical: TechnicalResult,
+    analytics: AnalyticsResult,
+    scope_risk: ScopeRiskResult,
+) -> str:
+    return "\n".join(
+        [
+            render_evidence_resolver_input(
+                feature,
+                context,
+                source_concerns,
+                game_design,
+                technical,
+                analytics,
+                scope_risk,
+            ),
+            "",
+            "INITIAL RESOLVER PASS (UNTRUSTED DATA)",
+            "=======================================",
+            initial_result.model_dump_json(indent=2),
+            "",
+            "SUPPLEMENTAL TARGETED REPOSITORY EVIDENCE (UNTRUSTED DATA)",
+            "===========================================================",
+            json.dumps(
+                [item.model_dump(mode="json") for item in supplemental_evidence],
+                indent=2,
+                sort_keys=True,
+                ensure_ascii=False,
+            ),
+            "",
+            "LOOKUP LIMITATIONS (UNTRUSTED DATA)",
+            "====================================",
+            json.dumps(lookup_limitations, indent=2, ensure_ascii=False),
+            "",
+            "FINALIZATION TASK",
+            "=================",
+            "Finalize every concern with a final status. Do not leave a lookup request "
+            "as an unresolved internal state.",
+        ]
+    )
 def render_producer_input(
     feature: str,
     game_design: GameDesignResult,
     technical: TechnicalResult,
     analytics: AnalyticsResult,
     scope_risk: ScopeRiskResult,
+    evidence_resolver: EvidenceResolverRecord | None = None,
 ) -> str:
+    resolver_block = (
+        "\nEVIDENCE RESOLVER RESULT\n========================\n"
+        + evidence_resolver.model_dump_json(indent=2)
+        if evidence_resolver is not None
+        else ""
+    )
     return f"""FEATURE
 -------
 {feature}
@@ -232,6 +452,7 @@ ANALYTICS RESULT
 SCOPE / RISK RESULT
 ===================
 {scope_risk.model_dump_json(indent=2)}
+{resolver_block}
 
 PRODUCER TASK
 =============
@@ -252,7 +473,14 @@ def render_director_input(
     analytics: AnalyticsResult,
     scope_risk: ScopeRiskResult,
     producer: ProducerResult,
+    evidence_resolver: EvidenceResolverRecord | None = None,
 ) -> str:
+    resolver_block = (
+        "\nEVIDENCE RESOLVER RESULT\n========================\n"
+        + evidence_resolver.model_dump_json(indent=2)
+        if evidence_resolver is not None
+        else ""
+    )
     return f"""FEATURE
 -------
 {feature}
@@ -272,6 +500,7 @@ ANALYTICS RESULT
 SCOPE / RISK RESULT
 ===================
 {scope_risk.model_dump_json(indent=2)}
+{resolver_block}
 
 PRODUCER RESULT
 ===============
@@ -319,13 +548,86 @@ def validate_specialist_evidence(
 def validate_producer_evidence(
     context: ContextBundle,
     producer: ProducerResult,
+    *,
+    supplemental_evidence_ids: list[str] = (),
 ) -> None:
     try:
-        validate_repository_evidence_ids(producer.evidence_ids, context)
+        validate_repository_evidence_ids(
+            producer.evidence_ids,
+            context,
+            supplemental_evidence_ids=supplemental_evidence_ids,
+        )
     except ContextBuilderError as error:
         raise CouncilOrchestrationError(
             f"Invalid repository evidence reference in Producer result: {error}"
         ) from error
+
+
+def validate_director_evidence(
+    context: ContextBundle,
+    director: DirectorResult,
+    *,
+    supplemental_evidence_ids: list[str] = (),
+) -> None:
+    try:
+        validate_repository_evidence_ids(
+            director.evidence_ids,
+            context,
+            supplemental_evidence_ids=supplemental_evidence_ids,
+        )
+    except ContextBuilderError as error:
+        raise CouncilOrchestrationError(
+            "Invalid repository evidence reference in Director result: "
+            f"{error}"
+        ) from error
+
+
+def validate_resolver_evidence(
+    context: ContextBundle,
+    resolver: EvidenceResolverResult,
+    supplemental_evidence_ids: list[str],
+) -> None:
+    evidence_ids = [
+        evidence_id
+        for concern in resolver.concerns
+        for evidence_id in concern.evidence_ids
+    ]
+    try:
+        validate_repository_evidence_ids(
+            evidence_ids,
+            context,
+            supplemental_evidence_ids=supplemental_evidence_ids,
+        )
+    except ContextBuilderError as error:
+        raise CouncilOrchestrationError(
+            "Invalid repository evidence reference in Evidence Resolver result: "
+            f"{error}"
+        ) from error
+
+
+def _validate_resolver_source_ids(
+    source_concerns: list[object],
+    resolver: EvidenceResolverResult,
+) -> None:
+    available = {getattr(item, "id") for item in source_concerns}
+    invalid = [
+        source_id
+        for concern in resolver.concerns
+        for source_id in concern.source_concern_ids
+        if source_id not in available
+    ]
+    requested = [
+        source_id
+        for request in resolver.lookup_requests
+        for source_id in request.concern_ids
+        if source_id not in available
+    ]
+    if invalid or requested:
+        values = invalid + requested
+        raise CouncilOrchestrationError(
+            "Evidence Resolver referenced unknown source concern IDs: "
+            + ", ".join(values)
+        )
 
 
 def _normalize_director_effort_confidence(

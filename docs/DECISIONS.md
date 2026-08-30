@@ -234,6 +234,18 @@ earlier aggregate-output proposal.
 **Consequence:** Council, combined, and Generalist-only runs have distinct,
 explicit artifact contracts and never fabricate inapplicable Council fields.
 
+## D021 — Resolve repository-answerable concerns before human review
+
+**Decision:** Add one Evidence Resolver stage after specialist validation and
+before Producer. It consolidates deterministic specialist concern provenance,
+uses supplied evidence first, and may make one bounded fixed-string search of
+tracked working-tree files before a second finalization pass.
+
+**Consequence:** Council preflight reserves one to two Resolver calls and
+persists `evidence_resolver.json`; Generalist still receives only the original
+feature and ContextBundle. Human questions are restricted to genuine Product
+decisions or repository-help limitations.
+
 ## D021 — Consolidate V1 documentation
 
 **Decision:** Keep README as a short getting-started guide and consolidate the

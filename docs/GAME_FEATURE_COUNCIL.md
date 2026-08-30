@@ -38,6 +38,8 @@ approved canonical feature + tracked Git working tree
           |
  validate specialist evidence
           |
+ Evidence Resolver (one pass, optional bounded lookup/final pass)
+          |
        Producer
           |
  validate Producer evidence
@@ -49,7 +51,9 @@ approved canonical feature + tracked Git working tree
         optional human comparison
 ```
 
-The four specialists run concurrently. Producer and Director are separate,
+The four specialists run concurrently. Evidence Resolver is a Council stage,
+not a fifth specialist: it consolidates concerns, validates evidence use, and
+can search only a small bounded set of tracked working-tree files. Producer and Director are separate,
 sequential synthesis stages. The Generalist is an independent baseline: it
 receives the same feature text and the same context, but cannot see Council
 outputs. The `both` CLI mode builds the context exactly once and supplies that
@@ -175,6 +179,8 @@ Model selection is configuration-controlled:
 
 - `COUNCIL_SPECIALIST_MODEL` selects the four specialist models.
 - `COUNCIL_SYNTHESIS_MODEL` selects Producer, Director, and Generalist.
+- `COUNCIL_RESOLVER_MODEL` selects Evidence Resolver; it falls back to
+  `COUNCIL_SYNTHESIS_MODEL`.
 - `COUNCIL_REFINER_MODEL` selects the optional interactive Feature Refiner; if
   unset, it falls back to the exact synthesis model configuration.
 

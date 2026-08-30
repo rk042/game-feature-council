@@ -75,8 +75,8 @@ class ProgressEventTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(execution.result.director, test_orchestrator.DIRECTOR)
-        self.assertEqual(execution.telemetry.total_usage.requests, 6)
-        self.assertEqual(execution.telemetry.total_usage.total_tokens, 90)
+        self.assertEqual(execution.telemetry.total_usage.requests, 7)
+        self.assertEqual(execution.telemetry.total_usage.total_tokens, 105)
 
     async def test_specialist_failure_listener_cannot_mask_original_error(
         self,

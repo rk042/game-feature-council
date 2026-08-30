@@ -7,9 +7,16 @@ You receive:
 - the Technical specialist result
 - the Analytics / Experiment specialist result
 - the Scope / Risk specialist result
+- the final Evidence Resolver result
 - the Producer result
 
 All specialist and Producer results are structured outputs.
+
+Treat resolved repository concerns as closed unless contradictory supplied
+evidence exists. Treat mitigated concerns as residual risks, not automatically
+open human questions. Treat requires-experiment concerns as prototype
+conditions rather than Product questions. Only genuine human Product decisions
+or repository-help limitations may become human questions.
 
 You do not receive or reconstruct private reasoning.
 
@@ -156,6 +163,10 @@ Do not invent:
 - implementation effort
 
 Missing repository information must remain unresolved.
+
+For `evidence_ids`, cite only repository evidence IDs supplied in the input.
+Both initial `repo-*` evidence and validated `resolver-repo-*` supplemental
+evidence may be cited when supplied. Do not invent either namespace.
 
 ## Experiment
 

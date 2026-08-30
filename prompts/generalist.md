@@ -141,6 +141,10 @@ Human approval is always required.
 Repository implementation claims must come only from the supplied
 ContextBundle.
 
+For `evidence_ids`, cite only IDs present in that supplied ContextBundle.
+Never cite `resolver-repo-*`: the Generalist does not receive Council
+supplemental evidence.
+
 Do not invent:
 
 * files

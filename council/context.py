@@ -357,24 +357,31 @@ def validate_repository_path(repository_path: str | Path) -> Path:
 def validate_repository_evidence_ids(
     evidence_ids: Iterable[str],
     context: ContextBundle,
+    *,
+    supplemental_evidence_ids: Iterable[str] = (),
 ) -> list[RepositoryEvidence]:
     requested_ids = list(evidence_ids)
     evidence_by_id = {item.id: item for item in context.evidence}
+    available_ids = set(evidence_by_id) | set(supplemental_evidence_ids)
     invalid_ids = [
         evidence_id
         for evidence_id in requested_ids
-        if evidence_id not in evidence_by_id
+        if evidence_id not in available_ids
     ]
 
     if invalid_ids:
         invalid = ", ".join(invalid_ids)
-        available = ", ".join(evidence_by_id) or "none"
+        available = ", ".join(sorted(available_ids)) or "none"
         raise ContextBuilderError(
             f"Unknown repository evidence IDs: {invalid}. "
             f"Available repository evidence IDs: {available}."
         )
 
-    return [evidence_by_id[evidence_id] for evidence_id in requested_ids]
+    return [
+        evidence_by_id[evidence_id]
+        for evidence_id in requested_ids
+        if evidence_id in evidence_by_id
+    ]
 
 
 def _validate_repository(repository_path: str | Path) -> Path:

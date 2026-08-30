@@ -62,6 +62,8 @@ OUTPUT_TOKEN_ALLOWANCES = {
     "technical": 1_400,
     "analytics": 1_400,
     "scope_risk": 1_400,
+    "resolver_pass_1": 1_500,
+    "resolver_pass_2": 1_500,
     "producer": 1_800,
     "director": 1_800,
     "generalist": 2_000,
@@ -112,6 +114,9 @@ class PreflightEstimate:
     estimated_cost_high_usd: Decimal | None
     conservative_max_cost_usd: Decimal | None
     unpriced_models: tuple[str, ...]
+    # Zero preserves compatibility with older direct construction in callers
+    # and means the call count is fixed at expected_calls.
+    minimum_calls: int = 0
 
 
 @dataclass(frozen=True)
@@ -162,6 +167,7 @@ class TerminalOutput(Protocol):
         mode: str,
         specialist_model: str | None,
         synthesis_model: str,
+        resolver_model: str | None,
         estimate: PreflightEstimate,
     ) -> None: ...
 
@@ -188,6 +194,7 @@ class PlainOutput:
         mode: str,
         specialist_model: str | None,
         synthesis_model: str,
+        resolver_model: str | None,
         estimate: PreflightEstimate,
     ) -> None:
         self._print("Preflight estimate (rough; actual telemetry is authoritative)")
@@ -196,6 +203,7 @@ class PlainOutput:
             mode,
             specialist_model,
             synthesis_model,
+            resolver_model,
             estimate,
         ):
             self._print(f"{label}: {value}")
@@ -227,6 +235,7 @@ class RichOutput:
         mode: str,
         specialist_model: str | None,
         synthesis_model: str,
+        resolver_model: str | None,
         estimate: PreflightEstimate,
     ) -> None:
         table = Table(
@@ -240,6 +249,7 @@ class RichOutput:
             mode,
             specialist_model,
             synthesis_model,
+            resolver_model,
             estimate,
         ):
             table.add_row(label, value)
@@ -1495,7 +1505,7 @@ async def _run_command(
         ) from error
 
     try:
-        specialist_model, synthesis_model = _read_model_configuration(
+        specialist_model, synthesis_model, resolver_model = _read_model_configuration(
             args.mode
         )
     except CliError as error:
@@ -1509,12 +1519,14 @@ async def _run_command(
         args.mode,
         specialist_model,
         synthesis_model,
+        resolver_model,
     )
     _print_preflight(
         context,
         args.mode,
         specialist_model,
         synthesis_model,
+        resolver_model,
         preflight,
         output,
     )
@@ -1702,6 +1714,7 @@ def build_preflight_estimate(
     mode: str,
     specialist_model: str | None,
     synthesis_model: str,
+    resolver_model: str | None = None,
 ) -> PreflightEstimate:
     base_input_tokens = _characters_to_tokens(
         len(render_specialist_input(feature, context))
@@ -1723,11 +1736,35 @@ def build_preflight_estimate(
         specialist_output_tokens = sum(
             OUTPUT_TOKEN_ALLOWANCES[role] for role in SPECIALIST_ROLES
         )
+        configured_resolver_model = resolver_model or synthesis_model
+        resolver_input_tokens = (
+            feature_tokens
+            + specialist_output_tokens
+            + _prompt_tokens("evidence_resolver.md")
+        )
+        budgets["resolver_pass_1"] = _RoleBudget(
+            model=configured_resolver_model,
+            input_tokens=resolver_input_tokens,
+            output_tokens=OUTPUT_TOKEN_ALLOWANCES["resolver_pass_1"],
+        )
+        # The conservative preflight reserves the optional final Resolver
+        # pass. Its supplemental repository input is bounded separately.
+        budgets["resolver_pass_2"] = _RoleBudget(
+            model=configured_resolver_model,
+            input_tokens=(
+                resolver_input_tokens
+                + OUTPUT_TOKEN_ALLOWANCES["resolver_pass_1"]
+                + 12_000 // CHARS_PER_TOKEN
+            ),
+            output_tokens=OUTPUT_TOKEN_ALLOWANCES["resolver_pass_2"],
+        )
         budgets["producer"] = _RoleBudget(
             model=synthesis_model,
             input_tokens=(
                 feature_tokens
                 + specialist_output_tokens
+                + OUTPUT_TOKEN_ALLOWANCES["resolver_pass_1"]
+                + OUTPUT_TOKEN_ALLOWANCES["resolver_pass_2"]
                 + _prompt_tokens("producer.md")
             ),
             output_tokens=OUTPUT_TOKEN_ALLOWANCES["producer"],
@@ -1737,6 +1774,8 @@ def build_preflight_estimate(
             input_tokens=(
                 feature_tokens
                 + specialist_output_tokens
+                + OUTPUT_TOKEN_ALLOWANCES["resolver_pass_1"]
+                + OUTPUT_TOKEN_ALLOWANCES["resolver_pass_2"]
                 + OUTPUT_TOKEN_ALLOWANCES["producer"]
                 + _prompt_tokens("director.md")
             ),
@@ -1761,6 +1800,7 @@ def build_preflight_estimate(
     )
     return PreflightEstimate(
         expected_calls=len(budgets),
+        minimum_calls=(len(budgets) - 1 if mode in {MODE_COUNCIL, MODE_BOTH} else len(budgets)),
         rough_input_tokens=sum(
             budget.input_tokens for budget in budgets.values()
         ),
@@ -1811,6 +1851,7 @@ def build_refiner_preflight_estimate(
     )
     return PreflightEstimate(
         expected_calls=1,
+        minimum_calls=1,
         rough_input_tokens=budget.input_tokens,
         output_token_allowance=budget.output_tokens,
         estimated_cost_low_usd=low_cost,
@@ -1952,6 +1993,7 @@ def _print_preflight(
     mode: str,
     specialist_model: str | None,
     synthesis_model: str,
+    resolver_model: str | None,
     estimate: PreflightEstimate,
     output: TerminalOutput,
 ) -> None:
@@ -1960,6 +2002,7 @@ def _print_preflight(
         mode,
         specialist_model,
         synthesis_model,
+        resolver_model,
         estimate,
     )
 
@@ -1969,6 +2012,7 @@ def _preflight_rows(
     mode: str,
     specialist_model: str | None,
     synthesis_model: str,
+    resolver_model: str | None,
     estimate: PreflightEstimate,
 ) -> tuple[tuple[str, str], ...]:
     rows = [
@@ -1980,8 +2024,14 @@ def _preflight_rows(
         ("Context characters", str(context.total_text_characters)),
         ("Specialist model", specialist_model or "not used"),
         ("Synthesis model", synthesis_model),
+        ("Evidence Resolver model", resolver_model or "not used"),
         ("Requested mode", mode),
-        ("Expected nominal model calls", str(estimate.expected_calls)),
+        (
+            "Expected nominal model calls",
+            str(estimate.expected_calls)
+            if not estimate.minimum_calls or estimate.minimum_calls == estimate.expected_calls
+            else f"{estimate.minimum_calls}-{estimate.expected_calls}",
+        ),
         ("Rough estimated input tokens", str(estimate.rough_input_tokens)),
         ("Rough output-token allowance", str(estimate.output_token_allowance)),
     ]
@@ -2143,9 +2193,10 @@ def _read_feature_file(feature_file: str) -> str:
     return feature
 
 
-def _read_model_configuration(mode: str) -> tuple[str | None, str]:
+def _read_model_configuration(mode: str) -> tuple[str | None, str, str | None]:
     specialist_model = os.environ.get("COUNCIL_SPECIALIST_MODEL", "").strip()
     synthesis_model = os.environ.get("COUNCIL_SYNTHESIS_MODEL", "").strip()
+    resolver_model = os.environ.get("COUNCIL_RESOLVER_MODEL", "").strip()
     missing: list[str] = []
     if mode in {MODE_COUNCIL, MODE_BOTH} and not specialist_model:
         missing.append("COUNCIL_SPECIALIST_MODEL")
@@ -2159,7 +2210,13 @@ def _read_model_configuration(mode: str) -> tuple[str | None, str]:
     active_specialist_model = (
         specialist_model if mode in {MODE_COUNCIL, MODE_BOTH} else None
     )
-    return active_specialist_model, synthesis_model
+    return (
+        active_specialist_model,
+        synthesis_model,
+        (resolver_model or synthesis_model)
+        if mode in {MODE_COUNCIL, MODE_BOTH}
+        else None,
+    )
 
 
 def _request_consent(

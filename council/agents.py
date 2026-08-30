@@ -6,6 +6,7 @@ from agents import Agent
 from council.models import (
     AnalyticsResult,
     DirectorResult,
+    EvidenceResolverResult,
     FeatureRefinerResult,
     GameDesignResult,
     ProducerResult,
@@ -80,6 +81,19 @@ def create_director_agent() -> Agent:
         instructions=load_prompt("director.md"),
         model=model,
         output_type=DirectorResult,
+    )
+
+
+def create_evidence_resolver_agent() -> Agent:
+    """Create the Council-only evidence reconciliation stage."""
+    model = os.environ.get("COUNCIL_RESOLVER_MODEL", "").strip()
+    if not model:
+        model = os.environ["COUNCIL_SYNTHESIS_MODEL"]
+    return Agent(
+        name="Evidence Resolver",
+        instructions=load_prompt("evidence_resolver.md"),
+        model=model,
+        output_type=EvidenceResolverResult,
     )
 
 

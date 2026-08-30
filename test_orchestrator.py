@@ -12,6 +12,11 @@ from council.models import (
     DecisionConditions,
     DirectorResult,
     EvidenceItem,
+    EvidenceResolverResult,
+    ResolvedConcern,
+    ResolutionStatus,
+    EvidenceLookupRequest,
+    SupplementalRepositoryEvidence,
     EvidenceType,
     Finding,
     RepositoryEvidence,
@@ -23,6 +28,7 @@ from council.orchestrator import (
     render_specialist_input,
     run_council,
     run_council_with_telemetry,
+    validate_director_evidence,
     validate_producer_evidence,
     validate_specialist_evidence,
 )
@@ -64,6 +70,7 @@ OUTPUTS = {
     "technical": TECHNICAL,
     "analytics": ANALYTICS,
     "scope_risk": SCOPE_RISK,
+    "resolver_pass_1": EvidenceResolverResult(),
     "producer": PRODUCER,
     "director": DIRECTOR,
 }
@@ -212,6 +219,10 @@ class OrchestratorTests(unittest.IsolatedAsyncioTestCase):
                 producer_completed = True
                 return PRODUCER
 
+            if agent == "resolver_pass_1":
+                self.assertEqual(set(completed), SPECIALIST_ROLES)
+                return OUTPUTS[agent]
+
             if agent == "director":
                 self.assertTrue(producer_completed)
                 return DIRECTOR
@@ -313,6 +324,34 @@ class OrchestratorTests(unittest.IsolatedAsyncioTestCase):
             PRODUCER.model_copy(update={"evidence_ids": ["repo-001"]}),
         )
 
+    def test_downstream_validation_accepts_only_actual_supplemental_ids(self) -> None:
+        context = self._context("repo-001")
+        producer = PRODUCER.model_copy(
+            update={"evidence_ids": ["repo-001", "resolver-repo-001"]}
+        )
+        director = DIRECTOR.model_copy(
+            update={"evidence_ids": ["resolver-repo-001"]}
+        )
+
+        validate_producer_evidence(
+            context,
+            producer,
+            supplemental_evidence_ids=["resolver-repo-001"],
+        )
+        validate_director_evidence(
+            context,
+            director,
+            supplemental_evidence_ids=["resolver-repo-001"],
+        )
+        with self.assertRaisesRegex(CouncilOrchestrationError, "resolver-repo-999"):
+            validate_producer_evidence(
+                context,
+                producer.model_copy(
+                    update={"evidence_ids": ["resolver-repo-999"]}
+                ),
+                supplemental_evidence_ids=["resolver-repo-001"],
+            )
+
     async def test_invalid_producer_evidence_stops_director(self) -> None:
         calls: list[str] = []
         invalid_producer = PRODUCER.model_copy(
@@ -363,6 +402,104 @@ class OrchestratorTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertNotIn("producer", calls)
         self.assertNotIn("director", calls)
+
+    async def test_resolver_invalid_evidence_stops_producer_and_director(self) -> None:
+        calls: list[str] = []
+        invalid_resolver = EvidenceResolverResult(
+            concerns=[
+                ResolvedConcern(
+                    concern_id="resolver-001",
+                    kind="unknown",
+                    canonical_concern="Repository question",
+                    source_concern_ids=["technical-001"],
+                    status=ResolutionStatus.RESOLVED_FROM_REPOSITORY,
+                    resolution="Claimed answer.",
+                    evidence_ids=["repo-999"],
+                )
+            ]
+        )
+
+        async def execute(agent: str, _input_text: str):
+            calls.append(agent)
+            if agent == "resolver_pass_1":
+                return invalid_resolver
+            return OUTPUTS[agent]
+
+        with self._patched_agent_factories():
+            with self.assertRaisesRegex(
+                CouncilOrchestrationError,
+                "Evidence Resolver result.*repo-999",
+            ):
+                await run_council(FEATURE, self._context(), execute)
+
+        self.assertNotIn("producer", calls)
+        self.assertNotIn("director", calls)
+
+    async def test_lookup_runs_second_resolver_pass_before_producer(self) -> None:
+        calls: list[str] = []
+        inputs: dict[str, list[str]] = {}
+        first = EvidenceResolverResult(
+            lookup_requests=[
+                EvidenceLookupRequest(
+                    concern_ids=["technical-001"],
+                    search_terms=["match count"],
+                )
+            ]
+        )
+        final = EvidenceResolverResult(
+            concerns=[
+                ResolvedConcern(
+                    concern_id="resolver-001",
+                    kind="unknown",
+                    canonical_concern="Which system owns match count",
+                    source_concern_ids=["technical-001"],
+                    status=ResolutionStatus.RESOLVED_FROM_REPOSITORY,
+                    resolution="Tracked source exposes the match-count owner.",
+                    evidence_ids=["resolver-repo-001"],
+                )
+            ]
+        )
+
+        async def execute(agent: str, input_text: str):
+            calls.append(agent)
+            inputs.setdefault(agent, []).append(input_text)
+            if agent == "resolver_pass_1":
+                return first if len(inputs[agent]) == 1 else final
+            if agent == "producer":
+                return PRODUCER.model_copy(
+                    update={"evidence_ids": ["repo-001", "resolver-repo-001"]}
+                )
+            if agent == "director":
+                return DIRECTOR.model_copy(
+                    update={"evidence_ids": ["resolver-repo-001"]}
+                )
+            return OUTPUTS[agent]
+
+        supplemental = SupplementalRepositoryEvidence(
+            id="resolver-repo-001",
+            file_path="src/Match.cs",
+            matched_terms=["match count"],
+            text="count",
+            truncated=False,
+        )
+        context = self._context()
+        original_context = context.model_copy(deep=True)
+        with self._patched_agent_factories(), patch.object(
+            orchestrator_module,
+            "bounded_targeted_lookup",
+            return_value=([supplemental], []),
+        ):
+            result = await run_council(FEATURE, context, execute)
+
+        self.assertEqual(calls.count("resolver_pass_1"), 2)
+        self.assertLess(calls.index("resolver_pass_1"), calls.index("producer"))
+        self.assertIn("resolver-repo-001", inputs["producer"][0])
+        self.assertIn("resolver-repo-001", inputs["director"][0])
+        self.assertTrue(result.evidence_resolver.second_pass_occurred)
+        self.assertEqual(context, original_context)
+        self.assertEqual(result.context, original_context)
+        self.assertEqual(result.producer.evidence_ids, ["repo-001", "resolver-repo-001"])
+        self.assertEqual(result.director.evidence_ids, ["resolver-repo-001"])
 
     def test_repository_evidence_uses_exact_bundle_and_source_type(self) -> None:
         valid_game_design = self._game_design_with_evidence(
@@ -472,6 +609,7 @@ class OrchestratorTests(unittest.IsolatedAsyncioTestCase):
             create_technical_agent=lambda: "technical",
             create_analytics_agent=lambda: "analytics",
             create_scope_risk_agent=lambda: "scope_risk",
+            create_evidence_resolver_agent=lambda: "resolver_pass_1",
             create_producer_agent=lambda: "producer",
             create_director_agent=lambda: "director",
         )

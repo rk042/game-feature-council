@@ -90,6 +90,7 @@ $env:OPENAI_API_KEY = "..."
 $env:COUNCIL_SPECIALIST_MODEL = "gpt-5.4-nano"
 $env:COUNCIL_SYNTHESIS_MODEL = "gpt-5.4-nano"
 $env:COUNCIL_REFINER_MODEL = "gpt-5.4-nano" # optional
+$env:COUNCIL_RESOLVER_MODEL = "gpt-5.4-nano" # optional; falls back to synthesis
 ```
 
 Do not put the API key in committed files. These assignments last only for the
@@ -204,7 +205,12 @@ Use `--yes` only when explicit non-interactive consent has already been given.
 ## Artifacts
 
 Council runs retain the established artifacts: input, context, four specialist
-results, Producer, Director, run metadata, `report.md`, and `report.html`.
+results, Evidence Resolver provenance, Producer, Director, run metadata,
+`report.md`, and `report.html`. The Resolver consolidates duplicate concerns,
+uses supplied evidence first, and may perform one bounded tracked-file lookup
+before routing only genuine Product or repository-help questions to humans.
+Resolved Council runs persist that provenance separately as
+`evidence_resolver.json`; Generalist-only runs do not create it.
 Combined runs also include `generalist.json` and `comparison.json`, with human
 comparison pending.
 

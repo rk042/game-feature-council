@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
@@ -183,6 +185,131 @@ class ScopeRiskResult(SpecialistCommon):
     economy_risks: list[str]
     technical_risks: list[str]
 
+
+class ConcernKind(str, Enum):
+    RISK = "risk"
+    UNKNOWN = "unknown"
+
+
+class ResolutionStatus(str, Enum):
+    RESOLVED_FROM_REPOSITORY = "resolved_from_repository"
+    MITIGATED = "mitigated"
+    REQUIRES_EXPERIMENT = "requires_experiment"
+    HUMAN_PRODUCT_DECISION = "human_product_decision"
+    HUMAN_REPOSITORY_HELP = "human_repository_help"
+
+
+class SourceConcern(BaseModel):
+    """A deterministic, auditable concern extracted from one specialist."""
+
+    id: str
+    source_role: Literal[
+        "game_design",
+        "technical",
+        "analytics",
+        "scope_risk",
+    ]
+    source_index: int = Field(ge=1)
+    kind: ConcernKind
+    text: str = Field(min_length=1)
+    evidence_ids: list[str] = Field(default_factory=list)
+
+
+class EvidenceLookupRequest(BaseModel):
+    concern_ids: list[str] = Field(min_length=1)
+    search_terms: list[str] = Field(min_length=1, max_length=5)
+
+    @field_validator("search_terms")
+    @classmethod
+    def validate_search_terms(cls, values: list[str]) -> list[str]:
+        if any(not value.strip() or len(value) > 80 for value in values):
+            raise ValueError("lookup search terms must be non-empty and at most 80 characters")
+        return values
+
+
+class SupplementalRepositoryEvidence(BaseModel):
+    id: str = Field(pattern=r"^resolver-repo-\d{3}$")
+    file_path: str
+    matched_terms: list[str] = Field(default_factory=list)
+    text: str
+    truncated: bool
+
+
+class ResolvedConcern(BaseModel):
+    concern_id: str = Field(min_length=1)
+    kind: ConcernKind
+    canonical_concern: str = Field(min_length=1)
+    source_concern_ids: list[str] = Field(min_length=1)
+    status: ResolutionStatus
+    resolution: str | None = None
+    evidence_ids: list[str] = Field(default_factory=list)
+    recommended_mitigation: str | None = None
+    residual_risk: str | None = None
+    why_unresolved: str | None = None
+    how_to_answer: str | None = None
+    human_question: str | None = None
+
+    @model_validator(mode="after")
+    def validate_status_contract(self) -> "ResolvedConcern":
+        if self.status == ResolutionStatus.RESOLVED_FROM_REPOSITORY:
+            if not self.resolution or not self.evidence_ids:
+                raise ValueError("repository resolution requires resolution text and evidence IDs")
+        if self.status == ResolutionStatus.MITIGATED:
+            if not self.recommended_mitigation or not self.residual_risk:
+                raise ValueError("mitigated concern requires mitigation and residual risk")
+            if not self.evidence_ids and not self.resolution:
+                raise ValueError(
+                    "mitigated concern requires evidence IDs or a sourced architecture explanation"
+                )
+        human_status = self.status in {
+            ResolutionStatus.HUMAN_PRODUCT_DECISION,
+            ResolutionStatus.HUMAN_REPOSITORY_HELP,
+        }
+        if human_status:
+            if not self.why_unresolved or not self.human_question:
+                raise ValueError("human-required concern requires explanation and question")
+        elif self.human_question is not None:
+            raise ValueError("only human-required concerns may contain a human question")
+        if self.status == ResolutionStatus.REQUIRES_EXPERIMENT:
+            if not self.why_unresolved or not self.how_to_answer:
+                raise ValueError("experiment concern requires explanation and how to answer")
+        return self
+
+
+class EvidenceResolverResult(BaseModel):
+    concerns: list[ResolvedConcern] = Field(default_factory=list)
+    lookup_requests: list[EvidenceLookupRequest] = Field(default_factory=list)
+
+
+class EvidenceResolverRecord(BaseModel):
+    feature_sha256: str = Field(min_length=1)
+    source_concerns: list[SourceConcern] = Field(default_factory=list)
+    concerns: list[ResolvedConcern] = Field(default_factory=list)
+    lookup_requests: list[EvidenceLookupRequest] = Field(default_factory=list)
+    supplemental_evidence: list[SupplementalRepositoryEvidence] = Field(default_factory=list)
+    lookup_limitations: list[str] = Field(default_factory=list)
+    second_pass_occurred: bool = False
+    attempted_calls: int = Field(ge=0, le=2)
+    usage_complete: bool = True
+    usage_unavailable_reason: str | None = None
+    telemetry: dict[str, RoleTelemetry] = Field(default_factory=dict)
+    estimated_cost_usd: Decimal | None
+    unpriced_models: list[str] = Field(default_factory=list)
+    pricing_snapshot_id: str
+
+    @model_validator(mode="after")
+    def validate_audit(self) -> "EvidenceResolverRecord":
+        if self.attempted_calls != len(self.telemetry):
+            raise ValueError("resolver attempted call count does not match telemetry")
+        if self.second_pass_occurred != ("resolver_pass_2" in self.telemetry):
+            raise ValueError("resolver second-pass flag does not match telemetry")
+        if self.usage_complete:
+            if self.usage_unavailable_reason is not None:
+                raise ValueError("complete resolver usage cannot have unavailable reason")
+        elif not (self.usage_unavailable_reason and self.usage_unavailable_reason.strip()):
+            raise ValueError("incomplete resolver usage requires unavailable reason")
+        return self
+
 class ProducerResult(BaseModel):
     confidence: Confidence
     confidence_reason: str
@@ -230,6 +357,7 @@ class DirectorResult(BaseModel):
 
     unresolved_unknowns: list[str]
     human_decisions_required: list[str]
+    evidence_ids: list[str] = Field(default_factory=list)
 
     decision_conditions: DecisionConditions
 
@@ -242,6 +370,7 @@ class CouncilResult(BaseModel):
     technical: TechnicalResult
     analytics: AnalyticsResult
     scope_risk: ScopeRiskResult
+    evidence_resolver: EvidenceResolverRecord | None = None
     producer: ProducerResult
     director: DirectorResult
 

@@ -1,3 +1,4 @@
+import hashlib
 import json
 import tempfile
 import unittest
@@ -12,6 +13,10 @@ from council.models import (
     CouncilResult,
     CouncilTelemetry,
     DirectorDecision,
+    EvidenceResolverRecord,
+    ResolvedConcern,
+    ResolutionStatus,
+    SupplementalRepositoryEvidence,
     HumanAction,
     HumanDecision,
     RepositoryEvidence,
@@ -25,8 +30,10 @@ from council.reporting import (
     create_run_record,
     prompt_for_human_decision,
     render_markdown_report,
+    render_html_report,
     update_run_with_human_decision,
     write_run_artifacts,
+    EXPECTED_RESOLVED_COUNCIL_ARTIFACT_FILES,
 )
 from test_orchestrator import DIRECTOR
 from test_producer_agent import (
@@ -52,6 +59,80 @@ ROLE_NAMES = (
 
 
 class ReportingTests(unittest.TestCase):
+    def test_resolved_run_writes_provenance_and_consolidated_human_section(self) -> None:
+        record = create_run_record(
+            FEATURE,
+            self._execution("/synthetic/example-repository"),
+            run_id="resolved-run",
+        )
+        resolver = EvidenceResolverRecord(
+            feature_sha256=hashlib.sha256(FEATURE.encode("utf-8")).hexdigest(),
+            source_concerns=[],
+            concerns=[
+                ResolvedConcern(
+                    concern_id="concern-001",
+                    kind="unknown",
+                    canonical_concern="How color is represented",
+                    source_concern_ids=["technical-001", "analytics-001"],
+                    status=ResolutionStatus.RESOLVED_FROM_REPOSITORY,
+                    resolution="Existing code uses GemType.",
+                    evidence_ids=["repo-001"],
+                ),
+                ResolvedConcern(
+                    concern_id="concern-002",
+                    kind="unknown",
+                    canonical_concern="Which target rule applies",
+                    source_concern_ids=["game-design-001"],
+                    status=ResolutionStatus.HUMAN_PRODUCT_DECISION,
+                    why_unresolved="Repository code cannot define new Product intent.",
+                    human_question="Which target rule should apply?",
+                ),
+            ],
+            supplemental_evidence=[
+                SupplementalRepositoryEvidence(
+                    id="resolver-repo-001",
+                    file_path="src/ResolverTarget.cs",
+                    matched_terms=["target"],
+                    text="bounded excerpt",
+                    truncated=False,
+                )
+            ],
+            attempted_calls=1,
+            telemetry={"resolver_pass_1": record.telemetry.roles["director"]},
+            estimated_cost_usd=Decimal("0.01"),
+            pricing_snapshot_id="test",
+        )
+        result = record.council_result.model_copy(
+            update={
+                "evidence_resolver": resolver,
+                "producer": record.council_result.producer.model_copy(
+                    update={"evidence_ids": ["resolver-repo-001"]}
+                ),
+                "director": record.council_result.director.model_copy(
+                    update={"evidence_ids": ["resolver-repo-001"]}
+                ),
+            }
+        )
+        record = record.model_copy(update={"council_result": result})
+        report = render_markdown_report(record)
+
+        self.assertIn("## Evidence Resolution Summary", report)
+        self.assertIn("Resolved from Repository", report)
+        self.assertIn("Which target rule should apply?", report)
+        self.assertNotIn("## Risks / Unknowns", report)
+        self.assertIn("### Initial Context Evidence", report)
+        self.assertIn("## Resolver Supplemental Evidence", report)
+        self.assertIn("resolver-repo-001", report)
+        html = render_html_report(record)
+        self.assertIn("Evidence Resolution", html)
+        self.assertIn("Resolver Supplemental Evidence", html)
+        self.assertIn("resolver-repo-001", html)
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = write_run_artifacts(record, temporary_directory)
+            self.assertEqual(
+                {path.name for path in directory.iterdir()},
+                EXPECTED_RESOLVED_COUNCIL_ARTIFACT_FILES,
+            )
     def test_report_deduplicates_overlapping_risks_and_unknowns_only(
         self,
     ) -> None:
