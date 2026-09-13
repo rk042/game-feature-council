@@ -171,7 +171,7 @@ PRODUCER = ProducerResult(
 def build_director_input() -> str:
     return f"""
 FEATURE
-=======
+-------
 {FEATURE}
 
 GAME DESIGN RESULT

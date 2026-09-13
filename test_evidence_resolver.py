@@ -130,4 +130,3 @@ class EvidenceResolverTests(unittest.TestCase):
             capture_output=True,
             text=True,
         )
-

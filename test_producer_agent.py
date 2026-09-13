@@ -317,7 +317,7 @@ SCOPE_RISK = ScopeRiskResult(
 def build_producer_input() -> str:
     return f"""
 FEATURE
-=======
+-------
 {FEATURE}
 
 GAME DESIGN RESULT

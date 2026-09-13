@@ -168,4 +168,3 @@ def bounded_targeted_lookup(
     if not evidence and not limitations:
         limitations.append("No tracked repository files matched the bounded lookup terms.")
     return evidence, limitations
-
