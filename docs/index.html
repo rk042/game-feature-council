@@ -1,0 +1,605 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Game Feature Council - b67d7094-2542-4879-9880-35ed42448787</title>
+  <style>
+:root{color-scheme:dark;--bg:#08111f;--surface:#0f1b2d;--surface2:#14243a;--text:#edf5ff;--muted:#9fb0c7;--border:#29405d;--blue:#57a5ff;--cyan:#4dd7dd;--violet:#a78bfa;--amber:#f4bd62;--pink:#f28cc8;--green:#64d7a0;--slate:#aab8cb}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:radial-gradient(circle at 80% 0,#132846 0,transparent 38%),var(--bg);color:var(--text);font:15px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}.shell{display:grid;grid-template-columns:230px minmax(0,1fr);max-width:1600px;margin:auto}.sidebar{position:sticky;top:0;height:100vh;padding:28px 22px;border-right:1px solid var(--border);background:#091321e8}.brand-mark{display:grid;place-items:center;width:48px;height:48px;border:1px solid #4c6f98;border-radius:14px;background:#152942;color:#8fc4ff;font-weight:800;letter-spacing:.08em}.sidebar nav{display:flex;flex-direction:column;gap:4px;margin-top:28px}.sidebar a{padding:9px 10px;border-radius:8px;color:var(--muted);text-decoration:none}.sidebar a:hover,.sidebar a:focus{background:var(--surface2);color:var(--text)}main{min-width:0;padding:38px clamp(20px,4vw,64px) 70px}.hero{padding:20px 0 28px;border-bottom:1px solid var(--border)}.eyebrow,.decision-kicker{margin:0;color:#7db9ff;font-size:.78rem;font-weight:800;letter-spacing:.13em;text-transform:uppercase}h1{margin:.2rem 0;font-size:clamp(2.2rem,5vw,4.4rem);line-height:1.05}h2{margin:0 0 18px;font-size:1.6rem}h3{margin:.2rem 0 .7rem}h4{margin:1.1rem 0 .5rem}.run-meta{display:flex;flex-wrap:wrap;gap:12px 24px;margin-top:20px;color:var(--muted)}.run-meta b{margin-right:6px;color:var(--text)}section{margin:34px 0;padding:28px;border:1px solid var(--border);border-radius:18px;background:#0d192aeb;box-shadow:0 18px 50px #0003}.ai-disclaimer{margin:26px 0;padding:18px 20px;border:1px solid #8d672b;border-left:5px solid var(--amber);border-radius:12px;background:#2b2112;color:#f9e3b7}.ai-disclaimer strong{font-size:1.05rem}.ai-disclaimer p{margin:.35rem 0}.metric-grid,.role-grid,.chart-grid,.evidence-grid,.comparison-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}.metric{min-height:116px;padding:18px;border:1px solid var(--border);border-radius:14px;background:linear-gradient(145deg,#15263c,#101d30)}.metric span{display:block;color:var(--muted);font-size:.8rem;text-transform:uppercase;letter-spacing:.08em}.metric strong{display:block;margin-top:10px;overflow-wrap:anywhere;font-size:1.35rem}.context-strip,.two-column,.three-column{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.three-column{grid-template-columns:repeat(3,minmax(0,1fr))}.context-strip>div,.card,.pending-card,.chart-card,.evidence-card,.evidence-item{padding:20px;border:1px solid var(--border);border-radius:14px;background:var(--surface)}.prewrap{white-space:pre-wrap;overflow-wrap:anywhere}.facts{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:7px 14px}.facts dt{color:var(--muted)}.facts dd{margin:0;overflow-wrap:anywhere}.decision-panel{background:linear-gradient(145deg,#123021,#0d1d25 68%)}.decision-panel.generalist{background:linear-gradient(145deg,#1a2637,#0d1d2c 68%)}.decision-value{margin:.3rem 0;font-size:clamp(2rem,5vw,4rem);font-weight:850;overflow-wrap:anywhere}.badge{display:inline-block;padding:5px 10px;border:1px solid #4b7d67;border-radius:999px;background:#153426}.condition-grid,.flow-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:22px}.condition-grid article,.flow-grid article{padding:15px;border:1px solid var(--border);border-radius:12px;background:#0a1626}.flow-grid article>span{display:block;color:#83bfff;font-size:.78rem;font-weight:800;letter-spacing:.1em;text-transform:uppercase}.architecture{margin-top:22px;padding:20px;border:1px dashed #3e5877;border-radius:14px}.architecture-lane{display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap}.architecture-lane+.architecture-lane{margin-top:15px}.arch-group,.arch-node{padding:12px 15px;border:1px solid var(--border);border-radius:10px;background:var(--surface2)}.arch-group{display:flex;flex-wrap:wrap;gap:8px}.arch-group b{width:100%}.arch-group span{padding:3px 7px;border-radius:6px;background:#0c192a;color:var(--muted)}.arrow{color:#75b7ff;font-size:1.5rem}.role-card{padding:20px;border:1px solid var(--border);border-top:3px solid var(--slate);border-radius:14px;background:var(--surface)}.role-card.violet{border-top-color:var(--violet)}.role-card.blue{border-top-color:var(--blue)}.role-card.cyan{border-top-color:var(--cyan)}.role-card.amber{border-top-color:var(--amber)}.role-card header,.section-heading{display:flex;align-items:center;gap:12px}.role-card header span,.section-heading p,.section-note{color:var(--muted)}.role-icon{width:34px;height:34px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}.telemetry{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.telemetry div{padding:8px;border-radius:8px;background:#0a1524}.telemetry dt{color:var(--muted);font-size:.75rem}.telemetry dd{margin:2px 0 0;overflow-wrap:anywhere}.finding-list li{margin:.55rem 0}.chips{display:inline-flex;flex-wrap:wrap;gap:4px;margin-left:8px}.chips code,.evidence-card code{padding:2px 6px;border:1px solid #365371;border-radius:999px;background:#15263a;color:#9ed0ff}.table-wrap{overflow-x:auto;margin-top:18px}table{width:100%;border-collapse:collapse}th,td{padding:10px;border-bottom:1px solid var(--border);text-align:left}thead th{color:#b8c9dd;font-size:.75rem;text-transform:uppercase;letter-spacing:.05em}.bar-row{margin:12px 0}.bar-label{display:flex;justify-content:space-between;gap:10px;margin-bottom:5px}.bar-label span{overflow-wrap:anywhere}.bar-track{display:flex;height:10px;overflow:hidden;border-radius:999px;background:#07101c}.bar{display:block;height:100%}.bar.input{background:var(--blue)}.bar.output{background:var(--violet)}.bar.duration{background:var(--cyan)}.bar.cost{background:var(--green)}.legend{display:flex;gap:16px;color:var(--muted);font-size:.82rem}.legend span:before{content:"";display:inline-block;width:9px;height:9px;margin-right:6px;border-radius:2px}.input-key:before{background:var(--blue)}.output-key:before{background:var(--violet)}.generalist-key:before{background:var(--cyan)}.council-key:before{background:var(--violet)}.risk-list{list-style:none;padding:0}.risk-list li{display:flex;gap:12px;margin:10px 0;padding:14px;border:1px solid var(--border);border-radius:10px;background:var(--surface)}.risk-index{display:grid;place-items:center;flex:0 0 28px;height:28px;border-radius:50%;background:#3a2b15;color:#ffd78c;font-weight:800}.evidence-card strong{display:block;margin-top:9px;overflow-wrap:anywhere}.evidence-item small{color:var(--muted)}details{margin-top:12px;border:1px solid var(--border);border-radius:10px;background:#0a1626}summary{cursor:pointer;padding:14px;font-weight:700}details>.evidence-grid{padding:0 14px 14px}.pending-card{border-style:dashed;border-color:#7d653d;background:#211c13}.pending-card.neutral{border-color:var(--border);background:var(--surface)}.radar-layout{display:grid;grid-template-columns:minmax(280px,400px) minmax(0,1fr);gap:24px;align-items:center;margin-top:20px}.radar{width:100%;max-width:380px}.radar-grid,.radar-axis{fill:none;stroke:#35506f;stroke-width:1}.radar-series{stroke-width:2}.generalist-series{fill:#4dd7dd44;stroke:var(--cyan)}.council-series{fill:#a78bfa55;stroke:var(--violet)}code{overflow-wrap:anywhere;color:#b9dcff}footer{margin-top:40px;padding:20px 0;border-top:1px solid var(--border);color:var(--muted)}.not-available{color:var(--muted);font-style:italic}
+@media(max-width:900px){.shell{display:block}.sidebar{position:static;width:auto;height:auto;border-right:0;border-bottom:1px solid var(--border)}.brand-mark{display:none}.sidebar nav{flex-direction:row;overflow-x:auto;margin:0}.sidebar a{white-space:nowrap}main{padding:24px 16px}.condition-grid,.flow-grid,.three-column{grid-template-columns:repeat(2,minmax(0,1fr))}.radar-layout{grid-template-columns:1fr}}
+@media(max-width:600px){.context-strip,.two-column,.three-column,.condition-grid,.flow-grid{grid-template-columns:1fr}section{padding:20px}.facts{grid-template-columns:1fr}.facts dd{margin-bottom:7px}}
+@media print{:root{color-scheme:light}body{background:#fff;color:#111;font-size:11pt}.shell{display:block;max-width:none}.sidebar{display:none}main{padding:0}.hero,section,.ai-disclaimer,.card,.role-card,.chart-card,.evidence-card,.evidence-item,.pending-card{break-inside:avoid;background:#fff;color:#111;box-shadow:none;border-color:#888}.section-note,.run-meta,.role-card header span,footer{color:#444}.bar-track{border:1px solid #777;background:#eee}.chips code,.evidence-card code{color:#111;background:#eee}.ai-disclaimer{border-color:#9a6817}.decision-panel{background:#fff}.architecture,.architecture *{border-color:#888}a{color:#111}}
+</style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar" aria-label="Report navigation">
+      <div class="brand-mark" aria-hidden="true">GFC</div>
+      <nav><a href="#executive">Executive Summary</a><a href="#feature-refinement">Feature Refinement</a><a href="#decision">Council Decision</a><a href="#workflow">Experiment Workflow</a><a href="#specialists">Specialist Findings</a><a href="#producer">Producer Synthesis</a><a href="#comparison">Generalist Comparison</a><a href="#metrics">Metrics &amp; Charts</a><a href="#risks">Evidence Resolution</a><a href="#evidence">Repository Evidence</a><a href="#human-review">Human Review</a></nav>
+    </aside>
+    <main>
+<header class="hero">
+  <p class="eyebrow">Repository-grounded feature evaluation</p>
+  <h1>Game Feature Council</h1>
+  <div class="run-meta">
+    <span><b>Run ID</b> b67d7094-2542-4879-9880-35ed42448787</span>
+    <span><b>Started</b> 2026-08-30T10:02:51.165525+00:00</span>
+    <span><b>Mode</b> Council + Generalist</span>
+  </div>
+</header>
+
+<aside class="ai-disclaimer" aria-label="AI-generated analysis warning">
+  <strong>AI-Generated Analysis</strong>
+  <p>This report contains findings generated with AI. AI systems can make mistakes
+  or misinterpret repository context.</p>
+  <p>Review the repository evidence, source documents, specialist findings,
+  and recommendations manually before making implementation, product,
+  economy, or production decisions.</p>
+</aside>
+<section id="executive"><h2>Executive Summary</h2><div class="metric-grid"><article class="metric"><span>Director Decision</span><strong>PROTOTYPE_FIRST</strong></article><article class="metric"><span>Confidence</span><strong>medium</strong></article><article class="metric"><span>Council Cost</span><strong>$0.056950</strong></article><article class="metric"><span>Council Tokens</span><strong>184,196</strong></article><article class="metric"><span>Council Duration</span><strong>85036.542 ms</strong></article><article class="metric"><span>Council Calls</span><strong>8</strong></article><article class="metric"><span>Combined Cost</span><strong>$0.062672</strong></article><article class="metric"><span>Combined Tokens</span><strong>201,481</strong></article><article class="metric"><span>Combined Calls</span><strong>9</strong></article><article class="metric"><span>Generalist Decision</span><strong>PROTOTYPE_FIRST</strong></article><article class="metric"><span>Generalist Confidence</span><strong>low</strong></article><article class="metric"><span>Generalist Cost</span><strong>$0.005722</strong></article><article class="metric"><span>Generalist Tokens</span><strong>17,285</strong></article><article class="metric"><span>Known Refiner Cost</span><strong>$0.001142</strong></article><article class="metric"><span>Refiner Tokens</span><strong>1,412</strong></article><article class="metric"><span>Refiner Attempts</span><strong>1</strong></article><article class="metric"><span>Refiner Completed Calls</span><strong>1</strong></article><article class="metric"><span>Overall Tokens</span><strong>202,893</strong></article><article class="metric"><span>Overall Cost</span><strong>$0.063814</strong></article><article class="metric"><span>Overall Calls</span><strong>10</strong></article></div></section>
+<section class="context-strip" aria-label="Feature and repository identity">
+  <div>
+    <h2>Feature Input</h2>
+    <p class="prewrap">Feature Goal:
+- Extend the current gem-merge/destroy system by introducing a new â€œspecial gemâ€ mechanic.
+
+Player Trigger:
+- The player performs a merge that results in 5 gems being merged into a single outcome.
+- Later, the player merges the resulting special gem with any gem of a chosen color/type.
+
+Activation:
+- When 5 gems are merged, create 1 special gem.
+- When the player merges the special gem with a specific color/type gem, use that gemâ€™s color/type as the match criterion.
+
+Expected Outcome:
+- The initial 5-gem merge results in exactly one special gem (quantity/placement behavior is not specified).
+- The special-gem merge destroys all matching gems on the board that are the same color/type as the gem used to merge with the special gem.
+
+Gameplay Continuation:
+- After the destroyed gems are removed, gameplay continues normally (e.g., any standard post-destruction flow is not specified by the user).
+
+Explicit Constraints:
+- Special gem creation specifically comes from merging 5 gems.
+- The special gem can be merged with any color gem.
+- The special gem merge destroys all matching same-color/type gems on the board.
+- Use final art provided by the art team; during development, placeholder/random art is acceptable.
+
+Art / Production Constraints:
+- Placeholder/random art can be used during development; final art will be provided by the art team.
+
+Not Specified by User:
+- How the â€œmerge 5 gemsâ€ occurs in terms of move rules (e.g., how the game detects/defines â€œmerging 5â€).
+- Whether the special gemâ€™s color/type is fixed or determined by later merges.
+- Exact effects on board state timing/animation order and whether cascades occur beyond â€œnormal gameplay.â€
+- How â€œmatching same-color/typeâ€ is defined when gems have additional properties beyond color/type (not specified).
+- Whether the special-gem merge consumes the special gem and/or the chosen color/type gem (not specified).
+- Edge cases (e.g., what happens if no matching gems exist; what happens if the chosen gem is itself part of the special-gem merge).</p>
+  </div>
+  <div>
+    <h2>Repository</h2>
+    <dl class="facts">
+      <dt>Path</dt><dd>Sample Unity Match-3 Project</dd>
+      <dt>Branch</dt><dd>master</dd>
+      <dt>Commit</dt><dd><code>sanitized-demo-snapshot</code></dd>
+      <dt>Tracked tree dirty</dt><dd>True</dd>
+      <dt>Selected evidence</dt><dd>10</dd>
+    </dl>
+  </div>
+</section>
+
+<section id="feature-refinement">
+  <h2>Feature Refinement</h2>
+  <p class="section-note">AI-generated interpretation preserved for auditability. The user approval status below determines the canonical feature input.</p>
+  <div class="two-column">
+    <div class="card"><h3>Original Feature Request</h3><p class="prewrap">Review how the current game merges and destroys gems. I want to add a new mechanic where merging 5 gems creates one special gem. The player can then merge that special gem with any color gem, and itdestroys all matching same-color/type gems on the board. Gameplay then continues normally. Final art will be provided by the art team, so placeholder/random art can be used during development.</p></div>
+    <div class="card"><h3>Status</h3><p>User approved; refined brief evaluated downstream</p><p><b>Attempts:</b> 1</p><p><b>Completed rounds:</b> 1</p></div>
+  </div>
+  <div class="three-column">
+    <div class="card"><h3>Concise Interpretation</h3><ul><li>Review the existing gem merge and destroy behavior.</li><li>Add a mechanic: merging 5 gems produces 1 special gem.</li><li>Allow the player to merge the special gem with any colored/type gem.</li><li>That merge destroys all gems on the board that match the chosen same color/type.</li><li>After the destruction resolves, normal gameplay continues.</li></ul></div>
+    <div class="card"><h3>Unresolved Before Repository Analysis</h3><ul><li>What exact game rule/system defines â€œmerging 5 gemsâ€ (how a player reaches/creates a 5-gem merge).</li><li>Does the special gem get created at a specific location or follow existing merge placement rules (not specified).</li><li>When merging the special gem with a color/type gem, is the match criterion the color/type of the second gem, and how is â€œtypeâ€ determined (not specified).</li><li>Which gems are destroyed exactly: all same-color/type gems currently on the board, including the one used to merge (not specified).</li><li>Does the merge consume the special gem and/or the participating color gem, and does it leave any replacement gem (not specified).</li><li>If there are cascades or further normal merges triggered by the destruction, how should they be handled relative to â€œcontinues normallyâ€ (not specified).</li><li>When no matching same-color/type gems exist, what should happen (not specified).</li></ul></div>
+    <div class="card"><h3>Preserved Constraints</h3><ul><li>Review how the current game merges and destroys gems.</li><li>Add a new mechanic: merging 5 gems creates one special gem.</li><li>Player can then merge that special gem with any color gem.</li><li>That merge destroys all matching same-color/type gems on the board.</li><li>After destruction, gameplay continues normally.</li><li>Final art will be provided by the art team; placeholder/random art is acceptable during development.</li></ul></div>
+  </div>
+  <details><summary>Approved Refined Feature Brief</summary><p class="prewrap">Feature Goal:
+- Extend the current gem-merge/destroy system by introducing a new â€œspecial gemâ€ mechanic.
+
+Player Trigger:
+- The player performs a merge that results in 5 gems being merged into a single outcome.
+- Later, the player merges the resulting special gem with any gem of a chosen color/type.
+
+Activation:
+- When 5 gems are merged, create 1 special gem.
+- When the player merges the special gem with a specific color/type gem, use that gemâ€™s color/type as the match criterion.
+
+Expected Outcome:
+- The initial 5-gem merge results in exactly one special gem (quantity/placement behavior is not specified).
+- The special-gem merge destroys all matching gems on the board that are the same color/type as the gem used to merge with the special gem.
+
+Gameplay Continuation:
+- After the destroyed gems are removed, gameplay continues normally (e.g., any standard post-destruction flow is not specified by the user).
+
+Explicit Constraints:
+- Special gem creation specifically comes from merging 5 gems.
+- The special gem can be merged with any color gem.
+- The special gem merge destroys all matching same-color/type gems on the board.
+- Use final art provided by the art team; during development, placeholder/random art is acceptable.
+
+Art / Production Constraints:
+- Placeholder/random art can be used during development; final art will be provided by the art team.
+
+Not Specified by User:
+- How the â€œmerge 5 gemsâ€ occurs in terms of move rules (e.g., how the game detects/defines â€œmerging 5â€).
+- Whether the special gemâ€™s color/type is fixed or determined by later merges.
+- Exact effects on board state timing/animation order and whether cascades occur beyond â€œnormal gameplay.â€
+- How â€œmatching same-color/typeâ€ is defined when gems have additional properties beyond color/type (not specified).
+- Whether the special-gem merge consumes the special gem and/or the chosen color/type gem (not specified).
+- Edge cases (e.g., what happens if no matching gems exist; what happens if the chosen gem is itself part of the special-gem merge).</p></details>
+  <p><b>Shared preprocessing telemetry:</b> model gpt-5.4-nano; 7217.11620001588 ms; 1412 known tokens; 1 completed calls; Refiner cost $0.001142; pricing snapshot openai-api-pricing-2026-08-28.</p>
+  
+</section>
+
+<section id="decision" class="decision-panel">
+  <div class="section-heading"><svg class="role-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m15 9-2 4-4 2 2-4 4-2Z"/></svg><div><div class="decision-kicker">Director recommendation</div></div></div>
+  <div class="decision-value">PROTOTYPE_FIRST</div>
+  <div class="badge">Confidence: medium</div>
+  <p>The proposed experiment is a credible, lower-uncertainty prototype that directly validates the most spec-critical second-stage behavior using existing GemType-based ColorClean/BonusGem patterns. However, it does not validate the full end-to-end loop starting from â€œmerge 5,â€ which is a core uncertainty for player agency/value; this argues for prototype-first rather than full GO. Effort is unquantified (repo-grounded unknowns around stage-2 interaction + test harness), but scope reduction improves feasibility and learning-per-effort.</p>
+  <p><b>Effort:</b> Unavailable | <b>Effort confidence:</b> low | Producerâ€™s effort estimate is unavailable in the provided materials and is not repository-grounded; key implementation uncertainties remain around (a) creating the stage-2 special-gem interaction path consistent with existing merge/swapping rules and (b) building deterministic test harness + reliable instrumentation. Therefore numeric effort cannot be credibly estimated from supplied evidence.</p>
+  <p><b>Director evidence:</b> <span class="chips"><code>repo-009</code><code>repo-005</code><code>repo-008</code><code>repo-004</code><code>resolver-repo-001</code><code>resolver-repo-002</code><code>resolver-repo-003</code><code>resolver-repo-004</code></span></p>
+  
+<dl class="telemetry">
+  <div><dt>Status</dt><dd>Complete</dd></div>
+  <div><dt>Model</dt><dd>gpt-5.4-nano</dd></div>
+  <div><dt>Duration</dt><dd>14380.429 ms</dd></div>
+  <div><dt>Tokens</dt><dd>28,828</dd></div>
+</dl>
+  <div class="two-column">
+    <div><h3>Rationale</h3><ul><li>Validates the highest-feasibility, highest-value uncertain consequence: chosen GemType â†’ board-wide destruction using existing deletion mechanisms (ColorClean) keyed by GemType.</li><li>Reduces the major unknown integration risk (detecting â€œmerge 5â€ and spawning exactly one special gem) by simulating stage-1 while keeping stage-2 real in board state.</li><li>Experiment measurement plan is directionally sound for correctness (GemType destroyed vs selector) and continuation (no input lock), but cannot answer whether players can reliably generate the special gem via the true â€œmerge 5â€ trigger.</li><li>Effort is not repository-grounded (developer_days null), so risk/cost cannot be fully weighed; hence prototype-first rather than GO/GO_WITH_REDUCED_SCOPE.</li></ul></div>
+    <div><h3>Human Decisions Required</h3><p class="not-available">See Evidence Resolution for genuine human input.</p></div>
+  </div>
+  <div class="condition-grid">
+    <article><h3>Scale</h3><ul><li>special_gem_spawned is correct (exactly one per attempt), stage_2_usability is observed as feasible, and activation_resolved shows target_correctness with low attribution ambiguity plus normal continuation after effect.</li></ul></article>
+    <article><h3>Iterate</h3><ul><li>stage-2 usability and targeting are partially correct but cascades/timing or player understanding lead to unreliable attribution or a weak/uncertain behavioral payoff.</li></ul></article>
+    <article><h3>Kill</h3><ul><li>in valid executions, chosen_gemtype mapping consistently fails (destroyed set does not correspond to chosen GemType) or the effect produces clear negative disruption despite correct execution.</li></ul></article>
+    <article><h3>Need More Data</h3><ul><li>experiment validity is uncertain (spawn instability, activation blocked, missing/incorrect instrumentation preventing trustworthy attribution) or key interpretation is blocked by unresolved mechanics like GemType mapping under wildcard/special variants.</li></ul></article>
+  </div>
+</section>
+
+<section id="workflow">
+  <h2>Build - Measure - Learn - Decide</h2>
+  <p class="section-note">Direct rendering of persisted experiment fields.</p>
+  <div class="flow-grid">
+    <article><span>Build</span><ul><li>Deterministic test scenario that spawns exactly one special gem and multiple gems across at least two GemTypes, so the player can perform the stage-2 merge with a chosen GemType.</li><li>Stage-2 special-gem logic that uses the merged-in (selector) gemâ€™s GemType as the target and triggers a board-wide deletion for that GemType (reusing the existing ColorClean-style GemType-wide deletion mechanism).</li><li>Instrumentation to: (a) identify the special gem instance, (b) record the selector gem instance/GemType used in the special merge, and (c) record which gems were destroyed during the special activation vs any standard match resolution.</li><li>Placeholder/random art only; no meta-progression or production UI required beyond enabling the merge interaction.</li></ul></article>
+    <article><span>Measure</span><ul><li>When players can merge a special gem with a chosen GemType T in the prototype, do they successfully complete the activation often enough, and does the effect reliably destroy the intended GemType T gems while allowing normal gameplay continuation?</li><li>special_gem_presence_correct (exactly one special gem instance per attempt)</li><li>stage_2_usability (activation attempt occurs after first interaction at a reasonable observed rate; Director/Product decision required for whatâ€™s â€œreasonableâ€)</li><li>target_correctness (destroyed_gem_count_by_chosen_gemtype matches expected GemType T count from the activation-start board state; Director/Product decision required for how to treat special/wildcard/bonus variants if present)</li><li>attribution robustness (cascades_occurred_flag remains low enough, or destruction can still be attributed, so the mechanic is not indistinguishable from normal resolution)</li><li>continuation (moves_after_activation â‰¥ 1 and no obvious state/logic failure indicated by immediate disruption)</li><li>Event: special_gem_spawned - Confirm test setup integrity: exactly one special gem exists and is identifiable for the run.</li><li>Event: special_gem_first_interacted - Measure whether players notice and can reach the special gem before attempting activation.</li><li>Event: special_gem_merge_attempted - Capture the chosen selector gem and GemType used to activate the special clear.</li><li>Event: special_gem_activation_resolved - Validate correctness by measuring destruction outcomes after the special effect completes.</li><li>Event: player_continues_after_special_activation - Check gameplay continuation: confirm the effect resolution doesnâ€™t break input flow or end progression unexpectedly.</li></ul></article>
+    <article><span>Learn</span><ul><li>Players can activate stage-2 often and destroyed set matches chosen GemType T with stable attribution; gameplay continues normally. - Supports that the stage-2 payoff is reliable/understandable and worth validating the full loop starting from the real â€˜merge 5â€™ trigger next. -&gt; scale</li><li>Activation occurs and targeting is mostly correct, but cascades/ordering make the effect feel random or measurement attribution becomes unreliable. - Stage-2 behavior exists but timing/cascade integration needs adjustment before full loop validation. -&gt; iterate</li><li>Activation occurs but destroyed set does not match chosen GemType T (selection-to-target mapping failure). - Stage-2 mechanic as implemented is incorrect for the spec; do not proceed to full loop validation until fixed. -&gt; kill</li><li>Special gem spawn setup is unstable (missing or multiple specials) or merge activation is blocked frequently. - Experiment validity is compromised by harness/integration problems; needs repair before judging the mechanic. -&gt; need_more_data</li></ul></article>
+    <article><span>Decide</span><ul><li>Scale: special_gem_spawned is correct (exactly one per attempt), stage_2_usability is observed as feasible, and activation_resolved shows target_correctness with low attribution ambiguity plus normal continuation after effect.</li><li>Iterate: stage-2 usability and targeting are partially correct but cascades/timing or player understanding lead to unreliable attribution or a weak/uncertain behavioral payoff.</li><li>Kill: in valid executions, chosen_gemtype mapping consistently fails (destroyed set does not correspond to chosen GemType) or the effect produces clear negative disruption despite correct execution.</li><li>Need More Data: experiment validity is uncertain (spawn instability, activation blocked, missing/incorrect instrumentation preventing trustworthy attribution) or key interpretation is blocked by unresolved mechanics like GemType mapping under wildcard/special variants.</li></ul></article>
+  </div>
+  <div class="architecture" aria-label="Evaluation architecture">
+<div class="architecture-lane">
+  <div class="arch-group"><b>Specialists</b><span>Game Design</span><span>Technical</span><span>Analytics</span><span>Scope / Risk</span></div>
+  <span class="arrow" aria-hidden="true">&rarr;</span>
+  <div class="arch-node">Evidence Resolver</div>
+  <span class="arrow" aria-hidden="true">&rarr;</span>
+  <div class="arch-node">Producer</div>
+  <span class="arrow" aria-hidden="true">&rarr;</span>
+  <div class="arch-node">Director</div>
+</div>
+<div class="architecture-lane baseline">
+  <div class="arch-node">Same Feature + Same Context</div>
+  <span class="arrow" aria-hidden="true">&rarr;</span>
+  <div class="arch-node">Generalist</div>
+  <span class="arrow" aria-hidden="true">&rarr;</span>
+  <div class="arch-node">Human Comparison</div>
+</div></div>
+</section>
+<section id="specialists"><h2>Specialist Findings</h2><div class="role-grid">
+<article class="role-card violet">
+  <header><svg class="role-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 10h14l2 7-3 2-3-3H9l-3 3-3-2 2-7Zm4 2v4m-2-2h4m6-1h.01m2 2h.01"/></svg><div><h3>Game Design</h3><span>prototype_first</span></div></header>
+  <p><b>Confidence:</b> medium</p>
+  <p>There is existing â€œbonus gemâ€ infrastructure (e.g., BonusGem/ColorClean) that suggests this mechanic can be expressed as a board-effect. However, the exact new 5-gem merge trigger and special-gem matching/cleanup rules are not fully specified, so the MVP experiment needs clarifying scope to test whether players care.</p>
+  
+<dl class="telemetry">
+  <div><dt>Status</dt><dd>Complete</dd></div>
+  <div><dt>Model</dt><dd>gpt-5.4-nano</dd></div>
+  <div><dt>Duration</dt><dd>9573.996 ms</dd></div>
+  <div><dt>Tokens</dt><dd>14,895</dd></div>
+</dl>
+  <h4>Findings</h4><ul class="finding-list"><li><span>To test whether players care, the experiment should focus on a single, repeatable moment: (1) creating the special gem via a deterministic 5-gem merge, then (2) executing the clear-all-matching-gems payoff based on the playerâ€™s chosen gem type.</span></li><li><span>The minimum player experience should not require full ambiguity resolution (consumption rules, cascade timing, edge cases). Instead, lock the mechanic down for the prototype experiment: define whether the special gem is consumed and whether the chosen gem is consumed, and treat the destroy as an immediate board clear after the merge animation.</span></li><li><span>Player motivation to care will come from understanding: â€œI can intentionally convert effort (a rare 5-gem merge) into a powerful, type-specific board wipe.â€ The experiment should validate that this creates excitement and strategy, not just visual effects.</span></li></ul>
+</article>
+
+<article class="role-card blue">
+  <header><svg class="role-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 7-5 5 5 5m6-10 5 5-5 5m-3-12-2 14"/></svg><div><h3>Technical</h3><span>prototype_first</span></div></header>
+  <p><b>Confidence:</b> medium</p>
+  <p>Repository evidence shows a match/bonus gem framework (Board, Gem, BonusGem, ColorClean) and gem â€œtypeâ€ is an existing concept. However, the specific â€˜merge 5 gems to create a special gemâ€™ detection and the exact merge/resolve pipeline are not evidenced in the provided snippets, so reuse vs new logic is uncertain.</p>
+  
+<dl class="telemetry">
+  <div><dt>Status</dt><dd>Complete</dd></div>
+  <div><dt>Model</dt><dd>gpt-5.4-nano</dd></div>
+  <div><dt>Duration</dt><dd>21299.447 ms</dd></div>
+  <div><dt>Tokens</dt><dd>16,848</dd></div>
+</dl>
+  <h4>Findings</h4><ul class="finding-list"><li><span>The codebase already models special/bonus-like gem behaviors via Gem subclasses (Gem) and a BonusGem base with shape/match integration (BonusGem), plus example â€œdelete all gems of a given typeâ€ logic (ColorClean) that iterates Board.CellContent and triggers deletion via match content handling.</span><span class="chips"><code>repo-009</code><code>repo-005</code><code>repo-008</code><code>repo-004</code></span></li><li><span>Gem identity/matching is already based on an integer GemType (Gem.GemType), and Board holds a CellContent map (Vector3Int -&gt; BoardCell) that includes the ContainingGem reference, enabling â€œdestroy all matching same-type gems on the boardâ€ to be implemented similarly to ColorClean.</span><span class="chips"><code>repo-009</code><code>repo-004</code><code>repo-008</code></span></li><li><span>The existing bonus framework suggests a pattern for triggering board-wide effects without relying solely on normal match-triggered destruction (BonusGem.HandleContent and ColorCleanâ€™s custom match + ForcedDeletion usage).</span><span class="chips"><code>repo-005</code><code>repo-008</code></span></li><li><span>There is insufficient evidence to determine how the game currently detects â€˜mergesâ€™ of varying sizes or specifically â€˜5 gems merged into oneâ€™ from player input; this likely requires hooking into the match creation/resolution step or extending match-shape logic, but the exact pipeline is not shown in the supplied snippets.</span></li></ul>
+</article>
+
+<article class="role-card cyan">
+  <header><svg class="role-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5m0 14h16M7 16l4-5 3 2 5-7"/></svg><div><h3>Analytics</h3><span>prototype_first</span></div></header>
+  <p><b>Confidence:</b> medium</p>
+  <p>The mechanic maps cleanly onto existing gameplay concepts (bonus gem/color-clean + board-wide gem deletion by GemType), but key spec details (timing, whether special gem is fixed or later-determined, and consumption/edge cases) are missing, so the smallest useful experiment must control those variables via a prototype ruleset.</p>
+  
+<dl class="telemetry">
+  <div><dt>Status</dt><dd>Complete</dd></div>
+  <div><dt>Model</dt><dd>gpt-5.4-nano</dd></div>
+  <div><dt>Duration</dt><dd>16006.357 ms</dd></div>
+  <div><dt>Tokens</dt><dd>17,021</dd></div>
+</dl>
+  <h4>Findings</h4><ul class="finding-list"><li>None</li></ul>
+</article>
+
+<article class="role-card amber">
+  <header><svg class="role-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4 6v5c0 5 3 8 8 10 5-2 8-5 8-10V6l-8-3Zm0 5v5m0 3h.01"/></svg><div><h3>Scope / Risk</h3><span>reduce_scope</span></div></header>
+  <p><b>Confidence:</b> medium</p>
+  <p>Repository evidence shows an existing â€œColorCleanâ€ bonus that deletes all gems of a chosen type, plus a general match/bonus framework. However, the exact new â€œmerge 5 -&gt; create special gem -&gt; later merge with a color/type to trigger board-wide deletionâ€ flow isnâ€™t evidenced, so some learning equivalence assumptions are inferred.</p>
+  
+<dl class="telemetry">
+  <div><dt>Status</dt><dd>Complete</dd></div>
+  <div><dt>Model</dt><dd>gpt-5.4-nano</dd></div>
+  <div><dt>Duration</dt><dd>15158.619 ms</dd></div>
+  <div><dt>Tokens</dt><dd>16,091</dd></div>
+</dl>
+  <h4>Findings</h4><ul class="finding-list"><li><span>You likely donâ€™t need to implement the full â€œ5-gems merge into a new special gemâ€ pipeline to learn the riskiest behavior; you can test the board-wide deletion behavior (and â€œuse chosen type as criterionâ€) with a mocked/temporary special gem trigger using the existing bonus framework pattern.</span><span class="chips"><code>repo-005</code><code>repo-008</code></span></li><li><span>The cheapest credible experiment is to validate the second-stage mechanic (â€œmerge special gem with chosen type deletes all matching gems on the boardâ€) while stubbing or simulating the first-stage trigger (i.e., spawn the special gem directly or grant a test gem in a controlled situation).</span><span class="chips"><code>repo-005</code><code>repo-008</code><code>repo-009</code></span></li><li><span>You can likely remove (for this experiment) all uncertainty about how â€œmerging 5â€ is detected/defined and any cascade/animation-order specifics, as long as the later trigger is real and operates on actual board state.</span></li><li><span>Because the repo already has a gem-type wide deletion bonus (â€œColorCleanâ€) and it selects a type based on the gem used (swappedGem) when available, you can reuse that behavior path to avoid building new global-deletion logic from scratch for validation.</span><span class="chips"><code>repo-008</code></span></li></ul>
+</article>
+</div></section>
+<section id="producer">
+  <div class="section-heading"><svg class="role-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 9 5-9 5-9-5 9-5Zm-7 9 7 4 7-4m-14 4 7 4 7-4"/></svg><div><h2>Producer Synthesis</h2><p>Structured synthesis of specialist outputs; not a debate transcript.</p></div></div>
+  
+<dl class="telemetry">
+  <div><dt>Status</dt><dd>Complete</dd></div>
+  <div><dt>Model</dt><dd>gpt-5.4-nano</dd></div>
+  <div><dt>Duration</dt><dd>17054.549 ms</dd></div>
+  <div><dt>Tokens</dt><dd>25,474</dd></div>
+</dl>
+  <div class="three-column">
+    <div class="card"><h3>Agreements</h3><ul><li>The special gemâ€™s â€œdestroy all matching same color/type gemsâ€ can be prototyped using the existing GemType-based board-wide deletion pattern from ColorClean.</li><li>The most credible MVP validation should happen in a controlled prototype run where the second-stage behavior (special gem merged with a selected GemType) can be observed and attributed to the mechanic.</li><li>Placeholder/random art is acceptable for MVP testing; focus is on mechanics + measured outcomes.</li></ul></div>
+    <div class="card"><h3>Disagreements</h3><ul><li>Game Design/Analytics both center the full loop including â€œmerge 5 gems â†’ create special gemâ€ with player control and short-session usability, while Scope/Risk recommends reducing scope by stubbing/simulating the 5-merge trigger (spawn the special gem directly) to avoid the uncertain/unknown integration point.</li><li>Game Design and Analytics treat uncertainty about activation timing/cascades/consumption as risks requiring full end-to-end loop testing; Scope/Risk treats the end-to-end â€œ5 mergeâ€ portion as unnecessary for initial learning if stage-2 is validated in real board state.</li></ul></div>
+    <div class="card"><h3>Dependencies</h3><ul><li>Board must support spawning/using a BonusGem-like special gem that can trigger a GemType-wide clear (via the existing bonus gem/effect pattern).</li><li>Instrumentation must be able to identify the GemType used by the later special-gem merge and enumerate/attribute which gems were destroyed by the special effect vs standard match resolution.</li><li>A prototype/test mode must allow creation of the stage-1 condition needed for stage-2 (either via real 5-merge detection or simulation).</li></ul></div>
+  </div>
+  <div class="card"><h3>Execution Steps</h3><ol><li>Set up deterministic test attempts in a prototype/test mode: place exactly one special gem plus a controllable distribution of gems across at least two GemTypes on the board.</li><li>Run attempts where the player performs: special gem interaction â†’ merge the special gem with a chosen GemType T (via the existing merge/swap interaction that represents â€œmerged with a gemâ€).</li><li>Log events: special_gem_spawned, special_gem_first_interacted, special_gem_merge_attempted (chosen GemType), and special_gem_activation_resolved (destroyed set and cascades flag).</li><li>After effect resolves, record player_continues_after_special_activation using subsequent moves/time-to-next-input.</li><li>Compare destroyed GemType T set against expected board contents at activation start to assess targeting correctness and measurement attribution reliability.</li><li>Repeat across segments: multiple GemType T choices and at least one scenario with no initial targets for GemType T if feasible in the harness.</li></ol></div>
+</section>
+
+<section id="comparison">
+  <h2>Council vs Generalist</h2>
+  <div class="comparison-grid">
+    
+<article class="card">
+  <h3>Council</h3>
+  <dl class="facts">
+    <dt>Decision</dt><dd>PROTOTYPE_FIRST</dd>
+    <dt>Confidence</dt><dd>medium</dd>
+    <dt>Duration</dt><dd>85036.542 ms</dd>
+    <dt>Input tokens</dt><dd>165,043</dd>
+    <dt>Output tokens</dt><dd>19,153</dd>
+    <dt>Total tokens</dt><dd>184,196</dd>
+    <dt>Estimated cost</dt><dd>$0.056950</dd>
+  </dl>
+</article>
+
+    
+<article class="card">
+  <h3>Generalist</h3>
+  <dl class="facts">
+    <dt>Decision</dt><dd>PROTOTYPE_FIRST</dd>
+    <dt>Confidence</dt><dd>low</dd>
+    <dt>Duration</dt><dd>13741.176 ms</dd>
+    <dt>Input tokens</dt><dd>15,128</dd>
+    <dt>Output tokens</dt><dd>2,157</dd>
+    <dt>Total tokens</dt><dd>17,285</dd>
+    <dt>Estimated cost</dt><dd>$0.005722</dd>
+  </dl>
+</article>
+
+  </div>
+  
+<div class="pending-card">
+  <strong>Human comparison pending</strong>
+  <p>Complete it with <code>council review --run b67d7094-2542-4879-9880-35ed42448787</code>.</p>
+</div>
+</section>
+
+<section id="metrics">
+  <h2>Metrics &amp; Charts</h2>
+  <p class="section-note">Charts use persisted completed-call telemetry. Durations are shown by role; no relative execution start positions are inferred.</p>
+  <div class="chart-grid"><article class="chart-card"><h3>Tokens by Role</h3><div class="legend"><span class="input-key">Input</span><span class="output-key">Output</span></div>
+<div class="bar-row">
+  <div class="bar-label"><span>Game Design</span><b>14,895</b></div>
+  <div class="bar-track" aria-label="Game Design: 13,499 input tokens and 1,396 output tokens">
+    <span class="bar input" style="width:37.289%"></span><span class="bar output" style="width:3.856%"></span>
+  </div>
+</div>
+<div class="bar-row">
+  <div class="bar-label"><span>Technical</span><b>16,848</b></div>
+  <div class="bar-track" aria-label="Technical: 14,738 input tokens and 2,110 output tokens">
+    <span class="bar input" style="width:40.712%"></span><span class="bar output" style="width:5.829%"></span>
+  </div>
+</div>
+<div class="bar-row">
+  <div class="bar-label"><span>Analytics</span><b>17,021</b></div>
+  <div class="bar-track" aria-label="Analytics: 14,297 input tokens and 2,724 output tokens">
+    <span class="bar input" style="width:39.493%"></span><span class="bar output" style="width:7.525%"></span>
+  </div>
+</div>
+<div class="bar-row">
+  <div class="bar-label"><span>Scope / Risk</span><b>16,091</b></div>
+  <div class="bar-track" aria-label="Scope / Risk: 14,156 input tokens and 1,935 output tokens">
+    <span class="bar input" style="width:39.104%"></span><span class="bar output" style="width:5.345%"></span>
+  </div>
+</div>
+<div class="bar-row">
+  <div class="bar-label"><span>Evidence Resolver</span><b>28,838</b></div>
+  <div class="bar-track" aria-label="Evidence Resolver: 25,961 input tokens and 2,877 output tokens">
+    <span class="bar input" style="width:71.713%"></span><span class="bar output" style="width:7.947%"></span>
+  </div>
+</div>
+<div class="bar-row">
+  <div class="bar-label"><span>Evidence Resolver finalizing</span><b>36,201</b></div>
+  <div class="bar-track" aria-label="Evidence Resolver finalizing: 33,473 input tokens and 2,728 output tokens">
+    <span class="bar input" style="width:92.464%"></span><span class="bar output" style="width:7.536%"></span>
+  </div>
+</div>
+<div class="bar-row">
+  <div class="bar-label"><span>Producer</span><b>25,474</b></div>
+  <div class="bar-track" aria-label="Producer: 22,422 input tokens and 3,052 output tokens">
+    <span class="bar input" style="width:61.938%"></span><span class="bar output" style="width:8.431%"></span>
+  </div>
+</div>
+<div class="bar-row">
+  <div class="bar-label"><span>Director</span><b>28,828</b></div>
+  <div class="bar-track" aria-label="Director: 26,497 input tokens and 2,331 output tokens">
+    <span class="bar input" style="width:73.194%"></span><span class="bar output" style="width:6.439%"></span>
+  </div>
+</div>
+<div class="bar-row">
+  <div class="bar-label"><span>Generalist</span><b>17,285</b></div>
+  <div class="bar-track" aria-label="Generalist: 15,128 input tokens and 2,157 output tokens">
+    <span class="bar input" style="width:41.789%"></span><span class="bar output" style="width:5.958%"></span>
+  </div>
+</div></article><article class="chart-card" id="duration-by-role"><h3>Execution Duration by Role</h3>
+<div class="bar-row">
+  <div class="bar-label"><span>Game Design</span><b>9573.996 ms</b></div>
+  <div class="bar-track" aria-label="Game Design: 9573.996 ms"><span class="bar duration" style="width:44.950%"></span></div>
+</div>
+<div class="bar-row">
+  <div class="bar-label"><span>Technical</span><b>21299.447 ms</b></div>
+  <div class="bar-track" aria-label="Technical: 21299.447 ms"><span class="bar duration" style="width:100.000%"></span></div>
+</div>
+<div class="bar-row">
+  <div class="bar-label"><span>Analytics</span><b>16006.357 ms</b></div>
+  <div class="bar-track" aria-label="Analytics: 16006.357 ms"><span class="bar duration" style="width:75.149%"></span></div>
+</div>
+<div class="bar-row">
+  <div class="bar-label"><span>Scope / Risk</span><b>15158.619 ms</b></div>
+  <div class="bar-track" aria-label="Scope / Risk: 15158.619 ms"><span class="bar duration" style="width:71.169%"></span></div>
+</div>
+<div class="bar-row">
+  <div class="bar-label"><span>Evidence Resolver</span><b>16159.142 ms</b></div>
+  <div class="bar-track" aria-label="Evidence Resolver: 16159.142 ms"><span class="bar duration" style="width:75.866%"></span></div>
+</div>
+<div class="bar-row">
+  <div class="bar-label"><span>Evidence Resolver finalizing</span><b>15773.969 ms</b></div>
+  <div class="bar-track" aria-label="Evidence Resolver finalizing: 15773.969 ms"><span class="bar duration" style="width:74.058%"></span></div>
+</div>
+<div class="bar-row">
+  <div class="bar-label"><span>Producer</span><b>17054.549 ms</b></div>
+  <div class="bar-track" aria-label="Producer: 17054.549 ms"><span class="bar duration" style="width:80.070%"></span></div>
+</div>
+<div class="bar-row">
+  <div class="bar-label"><span>Director</span><b>14380.429 ms</b></div>
+  <div class="bar-track" aria-label="Director: 14380.429 ms"><span class="bar duration" style="width:67.516%"></span></div>
+</div>
+<div class="bar-row">
+  <div class="bar-label"><span>Generalist</span><b>13741.176 ms</b></div>
+  <div class="bar-track" aria-label="Generalist: 13741.176 ms"><span class="bar duration" style="width:64.514%"></span></div>
+</div></article><article class="chart-card"><h3>Estimated Cost by Role</h3>
+<div class="bar-row">
+  <div class="bar-label"><span>Game Design</span><b>$0.004445</b></div>
+  <div class="bar-track" aria-label="Game Design: $0.004445"><span class="bar cost" style="width:43.988%"></span></div>
+</div>
+<div class="bar-row">
+  <div class="bar-label"><span>Technical</span><b>$0.005585</b></div>
+  <div class="bar-track" aria-label="Technical: $0.005585"><span class="bar cost" style="width:55.273%"></span></div>
+</div>
+<div class="bar-row">
+  <div class="bar-label"><span>Analytics</span><b>$0.006264</b></div>
+  <div class="bar-track" aria-label="Analytics: $0.006264"><span class="bar cost" style="width:61.996%"></span></div>
+</div>
+<div class="bar-row">
+  <div class="bar-label"><span>Scope / Risk</span><b>$0.005250</b></div>
+  <div class="bar-track" aria-label="Scope / Risk: $0.005250"><span class="bar cost" style="width:51.956%"></span></div>
+</div>
+<div class="bar-row">
+  <div class="bar-label"><span>Evidence Resolver</span><b>$0.008788</b></div>
+  <div class="bar-track" aria-label="Evidence Resolver: $0.008788"><span class="bar cost" style="width:86.975%"></span></div>
+</div>
+<div class="bar-row">
+  <div class="bar-label"><span>Evidence Resolver finalizing</span><b>$0.010105</b></div>
+  <div class="bar-track" aria-label="Evidence Resolver finalizing: $0.010105"><span class="bar cost" style="width:100.000%"></span></div>
+</div>
+<div class="bar-row">
+  <div class="bar-label"><span>Producer</span><b>$0.008299</b></div>
+  <div class="bar-track" aria-label="Producer: $0.008299"><span class="bar cost" style="width:82.135%"></span></div>
+</div>
+<div class="bar-row">
+  <div class="bar-label"><span>Director</span><b>$0.008213</b></div>
+  <div class="bar-track" aria-label="Director: $0.008213"><span class="bar cost" style="width:81.281%"></span></div>
+</div>
+<div class="bar-row">
+  <div class="bar-label"><span>Generalist</span><b>$0.005722</b></div>
+  <div class="bar-track" aria-label="Generalist: $0.005722"><span class="bar cost" style="width:56.626%"></span></div>
+</div></article></div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Role</th><th>Model</th><th>Duration</th><th>Input Tokens</th><th>Output Tokens</th><th>Total Tokens</th><th>Estimated Cost</th></tr></thead>
+    <tbody><tr><th>Game Design</th><td>gpt-5.4-nano</td><td>9573.996 ms</td><td>13,499</td><td>1,396</td><td>14,895</td><td>$0.004445</td></tr><tr><th>Technical</th><td>gpt-5.4-nano</td><td>21299.447 ms</td><td>14,738</td><td>2,110</td><td>16,848</td><td>$0.005585</td></tr><tr><th>Analytics</th><td>gpt-5.4-nano</td><td>16006.357 ms</td><td>14,297</td><td>2,724</td><td>17,021</td><td>$0.006264</td></tr><tr><th>Scope / Risk</th><td>gpt-5.4-nano</td><td>15158.619 ms</td><td>14,156</td><td>1,935</td><td>16,091</td><td>$0.005250</td></tr><tr><th>Evidence Resolver</th><td>gpt-5.4-nano</td><td>16159.142 ms</td><td>25,961</td><td>2,877</td><td>28,838</td><td>$0.008788</td></tr><tr><th>Evidence Resolver finalizing</th><td>gpt-5.4-nano</td><td>15773.969 ms</td><td>33,473</td><td>2,728</td><td>36,201</td><td>$0.010105</td></tr><tr><th>Producer</th><td>gpt-5.4-nano</td><td>17054.549 ms</td><td>22,422</td><td>3,052</td><td>25,474</td><td>$0.008299</td></tr><tr><th>Director</th><td>gpt-5.4-nano</td><td>14380.429 ms</td><td>26,497</td><td>2,331</td><td>28,828</td><td>$0.008213</td></tr><tr><th>Generalist</th><td>gpt-5.4-nano</td><td>13741.176 ms</td><td>15,128</td><td>2,157</td><td>17,285</td><td>$0.005722</td></tr></tbody>
+    <tfoot><tr><th>Role totals</th><td>&mdash;</td><td>Not summed</td><td>180,171</td><td>21,310</td><td>201,481</td><td>$0.062672</td></tr></tfoot>
+  </table></div>
+</section>
+
+<section id="risks">
+  <div class="section-heading"><h2>Evidence Resolution</h2><p>Consolidated from deterministic specialist concern provenance.</p></div>
+  <div class="metric-grid"><div class="metric"><span>Source concerns</span><strong>37</strong></div><div class="metric"><span>Consolidated concerns</span><strong>12</strong></div><div class="metric"><span>Resolved from repository</span><strong>0</strong></div><div class="metric"><span>Mitigated</span><strong>0</strong></div><div class="metric"><span>Require experiment</span><strong>12</strong></div><div class="metric"><span>Human input required</span><strong>0</strong></div></div>
+  <div class="risk-list"><article class="card"><span class="badge">requires_experiment</span><h3>Uncertainty about whether the game can detect/trigger a â€œmerge of 5 gems into a single outcomeâ€ reliably enough for player agency.</h3><dl class="facts"><dt>Recommended mitigation</dt><dd>Create a deterministic test scenario that yields the intended 5-gem outcome in the existing match/merge system, then verify in play that exactly one special gem is created only for that qualifying case (and not for other match sizes).</dd><dt>Residual risk</dt><dd>Even with correct 5-merge detection in the controlled case, other board states/cascades could still produce incorrect special counts.</dd><dt>Why unresolved</dt><dd>The supplied repository evidence does not include any match-resolution logic or any â€œmerge 5â€ detection/spawn integration point.</dd><dt>How to answer</dt><dd>Prototype the 5-merge trigger in a controlled test build and run multiple deterministic scenarios/seeded boards to confirm special-gem spawn counts and non-occurrence on non-5 merges.</dd><dt>Sources</dt><dd>game-design-001</dd></dl></article><article class="card"><span class="badge">requires_experiment</span><h3>Uncertainty about predictability of the special-gem clear effect: exactly which gems are destroyed and in what timing relative to the triggering merge/standard resolution.</h3><dl class="facts"><dt>Evidence</dt><dd>repo-008, repo-005, repo-004</dd><dt>Recommended mitigation</dt><dd>Implement the special clear using the existing GemType-based type-wide deletion pattern from ColorClean (custom match + ForcedDeletion + HandleContent), then validate which Board.CellContent gems get removed for the chosen GemType.</dd><dt>Residual risk</dt><dd>ColorCleanâ€™s deletion/removal behavior depends on HandleContent conditions (usable/used/current match) and on how the forced deletion integrates with the Boardâ€™s match/tick flow.</dd><dt>Why unresolved</dt><dd>Evidence shows a GemType-filtered deletion mechanism, but does not demonstrate its timing/ordering relative to normal match resolution for the new 5-mergeâ†’special workflow.</dd><dt>How to answer</dt><dd>Instrument/observe the destroyed gem set during special activation and compare it to the expected set of gems whose GemType matches the chosen gemâ€™s GemType at activation start.</dd><dt>Sources</dt><dd>game-design-002</dd></dl></article><article class="card"><span class="badge">requires_experiment</span><h3>Risk of the special-gem clear producing unexpected cascades/extra matches beyond normal post-destruction flow, making it feel buggy.</h3><dl class="facts"><dt>Evidence</dt><dd>repo-008, repo-005, repo-004</dd><dt>Recommended mitigation</dt><dd>Reuse ColorCleanâ€™s custom match + ForcedDeletion approach for deletion, then compare resulting post-clear match/cascade behavior against a baseline without the special activation in cascade-prone boards.</dd><dt>Residual risk</dt><dd>Static evidence does not include Boardâ€™s scheduler/tick ordering for custom matches vs falling/settling/match discovery; behavior could differ in practice.</dd><dt>Why unresolved</dt><dd>Supplied evidence doesnâ€™t show the match-resolution sequencing/timing needed to guarantee cascade behavior under forced deletions.</dd><dt>How to answer</dt><dd>Run special activation scenarios on boards designed to cascade, and verify whether the sequence/results match expected â€œnormal gameplay continuationâ€ rather than introducing extra unexpected matches.</dd><dt>Sources</dt><dd>game-design-003</dd></dl></article><article class="card"><span class="badge">requires_experiment</span><h3>Unclear consumption/placement/removal semantics for the special gem and the chosen gem during the special-gem activation.</h3><dl class="facts"><dt>Evidence</dt><dd>repo-008, repo-005, repo-009</dd><dt>Recommended mitigation</dt><dd>Validate lifecycle/removal semantics by comparing gem states before/after the special-gem activation: whether the special gem and the gem used to select the GemType remain or are destroyed/disappeared.</dd><dt>Residual risk</dt><dd>Gem lifecycle state (CurrentMatch/Usable/Used) can affect HandleContent outcomes, creating edge cases for removal/eligibility.</dd><dt>Why unresolved</dt><dd>Provided evidence covers ColorCleanâ€™s bonus-use behavior and GemType deletion, but does not specify the new mechanicâ€™s consumption/merge semantics.</dd><dt>How to answer</dt><dd>Prototype the special-gem merge interaction and observe Board.CellContent changes and Gem.State transitions for both participants during resolution.</dd><dt>Sources</dt><dd>game-design-004</dd></dl></article><article class="card"><span class="badge">requires_experiment</span><h3>Definition of â€œmerge 5 gemsâ€ within the projectâ€™s existing match/merge rules is unknown (match size/shape vs other combine mechanics).</h3><dl class="facts"><dt>Recommended mitigation</dt><dd>Identify what the game actually classifies as a â€œ5-gem mergeâ€ by creating/isolating board setups that yield different merge outcomes, then mapping which outcome corresponds to the intended 5-gem trigger.</dd><dt>Residual risk</dt><dd>If multiple game outcomes correspond to â€œ5+â€ effects or if cascades can create 5-like results, the trigger may still be ambiguous without a full taxonomy.</dd><dt>Why unresolved</dt><dd>No supplied repository evidence shows how matches/merges are computed or labeled by size.</dd><dt>How to answer</dt><dd>In a debug/testing build, generate deterministic board states that produce the candidate â€˜5â€™ outcomes, then verify which one occurs in the match resolution data/flow you hook for special creation.</dd><dt>Sources</dt><dd>game-design-005</dd></dl></article><article class="card"><span class="badge">requires_experiment</span><h3>How the game distinguishes â€œmergeâ€ vs â€œmatchâ€ outcomesâ€”and where special-gem creation should hook into the resolution flowâ€”is unknown.</h3><dl class="facts"><dt>Evidence</dt><dd>repo-004, repo-005</dd><dt>Recommended mitigation</dt><dd>Locate the practical integration point by running a prototype that triggers the intended 5-merge outcome, then confirm where in the match/bonus resolution sequence the special gem can be spawned exactly once.</dd><dt>Residual risk</dt><dd>Without visibility into Boardâ€™s resolution pipeline, there is risk the spawn hook aligns with animations/tick phases incorrectly, causing duplicates or missed spawns.</dd><dt>Why unresolved</dt><dd>The provided evidence includes Board, Gem, and BonusGem patterns, but not the match-resolution code that computes outcomes and triggers bonuses/bonus gems.</dd><dt>How to answer</dt><dd>Prototype a hook candidate, trigger a known qualifying 5-merge scenario, and confirm (via logs/observation) that special creation fires at the correct phase and only once.</dd><dt>Sources</dt><dd>game-design-006, technical-003</dd></dl></article><article class="card"><span class="badge">requires_experiment</span><h3>Whether the playerâ€™s chosen gem type/color is determined by selecting a specific gem to merge with the special gem (and how that selection is represented) is unknown.</h3><dl class="facts"><dt>Evidence</dt><dd>repo-008</dd><dt>Recommended mitigation</dt><dd>Adopt the existing ColorClean criterion pattern: when a gem is provided as the selector, use its GemType (swappedGem.GemType) as the target GemType, then validate it matches the player-selected gemâ€™s GemType in the new interaction.</dd><dt>Residual risk</dt><dd>If the selector input is null or uses a different code path than ColorClean (e.g., bonus-use vs on-board merge), mapping could fall back to unintended behavior.</dd><dt>Why unresolved</dt><dd>No supplied evidence shows how the new special-gem merge passes the â€˜chosen gemâ€™ into the deletion logic.</dd><dt>How to answer</dt><dd>Prototype the special-gem merge selection flow and test with multiple chosen gem types, confirming the cleared GemType equals the chosen gemâ€™s GemType.</dd><dt>Sources</dt><dd>game-design-007, technical-004</dd></dl></article><article class="card"><span class="badge">requires_experiment</span><h3>Consumption rules for the special gem and the chosen gem during the special-gem merge are unknown.</h3><dl class="facts"><dt>Evidence</dt><dd>repo-008, repo-009</dd><dt>Recommended mitigation</dt><dd>Measure post-activation board state for both the special gem and the chosen/type gem used to select the GemType, and compare to Gem/HandleContent eligibility rules.</dd><dt>Residual risk</dt><dd>HandleContent uses Usable/Used and CurrentMatch checks, which could create non-intuitive exceptions in certain gem states.</dd><dt>Why unresolved</dt><dd>Evidence describes ColorClean behavior as a bonus-use; it does not state the new mechanicâ€™s consumption semantics for a special gem merge.</dd><dt>How to answer</dt><dd>Prototype the activation and verify whether each participant gem remains or is removed, including in cases where the chosen gem has special/usable state.</dd><dt>Sources</dt><dd>game-design-008, technical-006, scope-risk-008</dd></dl></article><article class="card"><span class="badge">requires_experiment</span><h3>Exact definition of â€œmatching same color/typeâ€ when gems have wildcard/bonus/other properties is unknown.</h3><dl class="facts"><dt>Evidence</dt><dd>repo-009, repo-008</dd><dt>Recommended mitigation</dt><dd>Start with GemType equality as the matching criterion (as ColorClean filters by GemType), then run tests containing wildcard/bonus-capable gems to determine whether they should be included/excluded by the new mechanic.</dd><dt>Residual risk</dt><dd>Gem wildcard/special behavior and HandleContent eligibility can cause differences from a pure GemType==target conceptual model.</dd><dt>Why unresolved</dt><dd>Supplied evidence shows GemType exists and ColorClean uses it for deletion, but does not demonstrate how wildcard/special properties should be treated for the new special-gem merge targeting.</dd><dt>How to answer</dt><dd>Create/prepare board states that contain wildcard/bonus-related gems (as supported by the project) and verify the destroyed set aligns with the intended â€˜same color/typeâ€™ definition.</dd><dt>Sources</dt><dd>game-design-009, technical-005, scope-risk-007, analytics-004</dd></dl></article><article class="card"><span class="badge">requires_experiment</span><h3>Edge case behavior when no matching gems exist after the special-gem merge is unknown (what still gets consumed/destroyed).</h3><dl class="facts"><dt>Evidence</dt><dd>repo-008</dd><dt>Recommended mitigation</dt><dd>Trigger activation when the chosen GemType is absent on the board, then observe which, if any, gems/obstacles/matches are still affected and whether the special gem is removed.</dd><dt>Residual risk</dt><dd>Even with zero target gems, HandleContent may still affect obstacles or receiving match creation, depending on cell eligibility and match setup.</dd><dt>Why unresolved</dt><dd>No supplied evidence specifies the mechanicâ€™s behavior for a zero-target scenario.</dd><dt>How to answer</dt><dd>Prototype and trigger activation for a GemType absent from Board.CellContent, then inspect resulting board state and gem lifecycles after resolution.</dd><dt>Sources</dt><dd>game-design-010, analytics-009</dd></dl></article><article class="card"><span class="badge">requires_experiment</span><h3>Whether cascades are handled (and sequenced) relative to existing post-destruction match resolution is unknown.</h3><dl class="facts"><dt>Evidence</dt><dd>repo-004, repo-008</dd><dt>Recommended mitigation</dt><dd>Use ColorCleanâ€™s forced custom match deletion approach, then test cascade-prone boards to verify ordering with the Boardâ€™s standard post-destruction flow (falling/settling and subsequent matches).</dd><dt>Residual risk</dt><dd>Board tick scheduling and when forced deletion triggers additional match checks could change in integration, affecting cascade order.</dd><dt>Why unresolved</dt><dd>The provided evidence doesnâ€™t include the Board match scheduler/timing details needed to conclude cascade sequencing.</dd><dt>How to answer</dt><dd>Instrument event order during activation (deletion, forced match creation, falls/settle, and new match detection) and compare against baseline activation-free runs.</dd><dt>Sources</dt><dd>game-design-011, technical-007, scope-risk-002</dd></dl></article><article class="card"><span class="badge">requires_experiment</span><h3>Board-wide destruction could interact with match sequencing, causing unexpected additional matches beyond the intended effect.</h3><dl class="facts"><dt>Evidence</dt><dd>repo-008, repo-004, repo-005</dd><dt>Recommended mitigation</dt><dd>Follow ColorCleanâ€™s approach (custom match + ForcedDeletion + HandleContent) and validate the resulting board outcomes against baseline runs and expected target deletion sets.</dd><dt>Residual risk</dt><dd>HandleContent conditional behavior (obstacles/usable/CurrentMatch) and custom match timing may still produce non-intuitive side effects.</dd><dt>Why unresolved</dt><dd>No supplied evidence shows how Board sequences custom matches triggered by forced deletion relative to the rest of its tick/match pipeline.</dd><dt>How to answer</dt><dd>Run controlled comparisons: same initial board state with and without special activation, then verify resulting matches and remaining gems are attributable and consistent.</dd><dt>Sources</dt><dd>technical-002</dd></dl></article></div>
+  <h3>Resolver Supplemental Evidence</h3>
+  <div class="evidence-grid"><article class="evidence-item"><code>resolver-repo-001</code><strong>Assets/GemHunterMatch/Scripts/BonusGem/BonusGem.cs</strong><small>Matched: bonus, match, special, trigger</small></article><article class="evidence-item"><code>resolver-repo-002</code><strong>Assets/GemHunterMatch/Scripts/BonusItem/BonusGemBonusItem.cs</strong><small>Matched: bonus, match, special, trigger</small></article><article class="evidence-item"><code>resolver-repo-003</code><strong>Assets/GemHunterMatch/Scripts/Gem.cs</strong><small>Matched: bonus, match, special, trigger</small></article><article class="evidence-item"><code>resolver-repo-004</code><strong>Assets/GemHunterMatch/Prefabs/BonusGems/ColorBonus.prefab</strong><small>Matched: bonus, match, trigger</small></article></div>
+  <h4>Lookup limitations</h4><ul class="finding-list"><li>Supplemental file limit reached.</li></ul>
+</section>
+
+<section id="evidence">
+  <h2>Repository Evidence</h2>
+  <p class="section-note">Bounded evidence metadata is shown without reproducing full repository source excerpts.</p>
+  <div class="evidence-grid">
+<article class="evidence-card">
+  <div><code>repo-001</code><strong>README.md</strong></div>
+  <p><b>Selection:</b> reserved core context, exact filename candidate, repository metadata candidate, documentation relevance, feature term match, multiple feature term matches</p>
+  <p><b>Matched terms:</b> gem, art</p>
+  <p><b>Excerpt truncated:</b> False</p>
+</article>
+<article class="evidence-card">
+  <div><code>repo-002</code><strong>GemHunterUGSCloud/GemHunterUGSCloud.sln</strong></div>
+  <p><b>Selection:</b> reserved core context, exact filename candidate, feature term match</p>
+  <p><b>Matched terms:</b> gem</p>
+  <p><b>Excerpt truncated:</b> False</p>
+</article>
+<article class="evidence-card">
+  <div><code>repo-003</code><strong>Assets/CloudCode/GeneratedModuleBindings/Unity.Services.CloudCode.GeneratedBindings.asmdef</strong></div>
+  <p><b>Selection:</b> reserved core context, exact filename candidate</p>
+  <p><b>Matched terms:</b> None</p>
+  <p><b>Excerpt truncated:</b> False</p>
+</article>
+<article class="evidence-card">
+  <div><code>repo-004</code><strong>Assets/GemHunterMatch/Scripts/Board.cs</strong></div>
+  <p><b>Selection:</b> source relevance, feature term match, multiple feature term matches</p>
+  <p><b>Matched terms:</b> gem, color, gems, type, art, matching, board</p>
+  <p><b>Excerpt truncated:</b> True</p>
+</article>
+<article class="evidence-card">
+  <div><code>repo-005</code><strong>Assets/GemHunterMatch/Scripts/BonusGem/BonusGem.cs</strong></div>
+  <p><b>Selection:</b> source relevance, feature term match, multiple feature term matches</p>
+  <p><b>Matched terms:</b> gem, special, gems, art, matching, board</p>
+  <p><b>Excerpt truncated:</b> True</p>
+</article>
+<article class="evidence-card">
+  <div><code>repo-006</code><strong>Assets/GemHunterMatch/Scripts/UI/UIHandler.cs</strong></div>
+  <p><b>Selection:</b> source relevance, feature term match, multiple feature term matches</p>
+  <p><b>Matched terms:</b> gem, color, gems, type, art, board</p>
+  <p><b>Excerpt truncated:</b> True</p>
+</article>
+<article class="evidence-card">
+  <div><code>repo-007</code><strong>GemHunterUGSCloud/Project/Services/PlayerEconomyService.cs</strong></div>
+  <p><b>Selection:</b> source relevance, feature term match, multiple feature term matches</p>
+  <p><b>Matched terms:</b> gem, special, color, gems, type, art</p>
+  <p><b>Excerpt truncated:</b> True</p>
+</article>
+<article class="evidence-card">
+  <div><code>repo-008</code><strong>Assets/GemHunterMatch/Scripts/BonusGem/ColorClean.cs</strong></div>
+  <p><b>Selection:</b> source relevance, feature term match, multiple feature term matches</p>
+  <p><b>Matched terms:</b> gem, color, gems, type, board</p>
+  <p><b>Excerpt truncated:</b> False</p>
+</article>
+<article class="evidence-card">
+  <div><code>repo-009</code><strong>Assets/GemHunterMatch/Scripts/Gem.cs</strong></div>
+  <p><b>Selection:</b> source relevance, feature term match, multiple feature term matches</p>
+  <p><b>Matched terms:</b> gem, special, type, art, board</p>
+  <p><b>Excerpt truncated:</b> False</p>
+</article>
+<article class="evidence-card">
+  <div><code>repo-010</code><strong>Assets/GemHunterMatch/Scripts/Authoring/GemPlacerTile.cs</strong></div>
+  <p><b>Selection:</b> source relevance, feature term match, multiple feature term matches</p>
+  <p><b>Matched terms:</b> gem, type, art, board</p>
+  <p><b>Excerpt truncated:</b> False</p>
+</article></div>
+  <details><summary>Game Design Evidence</summary><div class="evidence-grid">
+<article class="evidence-item">
+  <div><span class="chips"><code>repo-005</code></span><span>repository</span></div>
+  <p>The project already has a general â€œBonusGemâ€ concept used as a special board effect triggered by match/shape events.</p>
+  <small>Assets/GemHunterMatch/Scripts/BonusGem/BonusGem.cs </small>
+  <p><b>Why it matters:</b> Leaning on existing bonus-style behavior reduces prototype scope and helps test player interest faster.</p>
+</article>
+<article class="evidence-item">
+  <div><span class="chips"><code>repo-008</code></span><span>repository</span></div>
+  <p>There is an existing example of a bonus gem that deletes all gems of a given type across the board (ColorClean).</p>
+  <small>Assets/GemHunterMatch/Scripts/BonusGem/ColorClean.cs </small>
+  <p><b>Why it matters:</b> This closely matches the proposed â€œdestroy all matching same-color/type gemsâ€ payoff, so the prototype can be minimal.</p>
+</article>
+<article class="evidence-item">
+  <div><span class="chips"><code>repo-009</code></span><span>repository</span></div>
+  <p>Gems have a GemType field and a Base GemUse/Destroyed lifecycle.</p>
+  <small>Assets/GemHunterMatch/Scripts/Gem.cs </small>
+  <p><b>Why it matters:</b> A â€œtype-based wipeâ€ can be implemented consistently around GemType rather than inventing a new tagging system for the prototype.</p>
+</article></div></details><details><summary>Technical Evidence</summary><div class="evidence-grid">
+<article class="evidence-item">
+  <div><span class="chips"><code>repo-004</code></span><span>repository</span></div>
+  <p>Board manages CellContent and match processing, and is the likely integration point for special-gem spawning/effects.</p>
+  <small>Assets/GemHunterMatch/Scripts/Board.cs Match3.Board</small>
+  <p><b>Why it matters:</b> The feature requires adding logic into the match/resolve pipeline and manipulating the board state.</p>
+</article>
+<article class="evidence-item">
+  <div><span class="chips"><code>repo-009</code></span><span>repository</span></div>
+  <p>Gems have a GemType integer that can be used as the match criterion.</p>
+  <small>Assets/GemHunterMatch/Scripts/Gem.cs Match3.Gem.GemType</small>
+  <p><b>Why it matters:</b> The â€˜chosen color/typeâ€™ destruction rule maps directly to an existing gem attribute.</p>
+</article>
+<article class="evidence-item">
+  <div><span class="chips"><code>repo-005</code></span><span>repository</span></div>
+  <p>BonusGem provides an extensible way to define special gem effects tied to match events, and includes helper logic to destroy/consume board content via HandleContent.</p>
+  <small>Assets/GemHunterMatch/Scripts/BonusGem/BonusGem.cs Match3.BonusGem</small>
+  <p><b>Why it matters:</b> A special gem with a board-wide effect resembles the existing bonus gem architecture.</p>
+</article>
+<article class="evidence-item">
+  <div><span class="chips"><code>repo-008</code></span><span>repository</span></div>
+  <p>ColorClean deletes all gems of a given type by creating a custom match and iterating Board.CellContent.</p>
+  <small>Assets/GemHunterMatch/Scripts/BonusGem/ColorClean.cs Match3.ColorClean.Use</small>
+  <p><b>Why it matters:</b> This is the closest existing implementation to the â€˜destroy all matching same color/type gemsâ€™ requirement.</p>
+</article></div></details><details><summary>Analytics Evidence</summary><div class="evidence-grid">
+<article class="evidence-item">
+  <div><span class="chips"><code>repo-009</code></span><span>repository</span></div>
+  <p>Gems have a GemType integer used as the primary classification for board effects.</p>
+  <small>Assets/GemHunterMatch/Scripts/Gem.cs class Gem</small>
+  <p><b>Why it matters:</b> Supports using a single â€œcolor/typeâ€ key for identifying which board gems should be destroyed.</p>
+</article>
+<article class="evidence-item">
+  <div><span class="chips"><code>repo-008</code></span><span>repository</span></div>
+  <p>A board-wide â€œdelete all gems of a given typeâ€ effect exists via ColorClean bonus gem logic.</p>
+  <small>Assets/GemHunterMatch/Scripts/BonusGem/ColorClean.cs class ColorClean : BonusGem</small>
+  <p><b>Why it matters:</b> Provides a close conceptual template for the special-gem effect: select a type, then destroy all gems whose GemType matches.</p>
+</article>
+<article class="evidence-item">
+  <div><span class="chips"><code>repo-005</code></span><span>repository</span></div>
+  <p>BonusGem is a special gem concept and can trigger board-wide effects without participating in normal match resolution.</p>
+  <small>Assets/GemHunterMatch/Scripts/BonusGem/BonusGem.cs class BonusGem : Gem</small>
+  <p><b>Why it matters:</b> Indicates we can prototype special-gem behavior using the existing â€œbonus gemâ€ pattern for effects/VFX separation.</p>
+</article></div></details><details><summary>Scope / Risk Evidence</summary><div class="evidence-grid">
+<article class="evidence-item">
+  <div><span class="chips"><code>repo-005</code></span><span>repository</span></div>
+  <p>Bonus gems can trigger board effects; the system distinguishes bonus use (not via swap) and supports forced match creation used to delete affected content safely.</p>
+  <small>Assets/GemHunterMatch/Scripts/BonusGem/BonusGem.cs BonusGem</small>
+  <p><b>Why it matters:</b> Supports validating the later-stage â€œdelete all matching type gemsâ€ without requiring the full 5-merge special creation pipeline.</p>
+</article>
+<article class="evidence-item">
+  <div><span class="chips"><code>repo-008</code></span><span>repository</span></div>
+  <p>ColorClean deletes all gems on the board of a given GemType, and when a gem is provided (swappedGem) it uses that gemâ€™s GemType as the target type.</p>
+  <small>Assets/GemHunterMatch/Scripts/BonusGem/ColorClean.cs ColorClean</small>
+  <p><b>Why it matters:</b> This is a direct partial match to the requested special-gem second-stage: destroy all same-type gems based on the gem used to merge with the special gem.</p>
+</article>
+<article class="evidence-item">
+  <div><span class="chips"><code>repo-009</code></span><span>repository</span></div>
+  <p>Gem has GemType and wildcard/usable/used mechanics; matching and destruction states exist, indicating that â€œtypeâ€ comparisons and bonus interactions can affect correctness.</p>
+  <small>Assets/GemHunterMatch/Scripts/Gem.cs Gem</small>
+  <p><b>Why it matters:</b> Clarifies the likely axis of correctness: GemType equality vs special cases (wildcards/bonuses/usable).</p>
+</article></div></details>
+</section>
+<section id="human-review"><h2>Human Review</h2><div class="two-column"><div class="pending-card"><strong>Product / Director Review</strong><p>Status: Pending</p></div><div class="pending-card"><strong>Council vs Generalist Review</strong><p>Status: Pending</p></div></div></section>
+<footer>
+  <p>Deterministic presentation of persisted Game Feature Council artifacts.</p>
+  <p>Pricing snapshot: <code>openai-api-pricing-2026-08-28</code></p>
+</footer>
+</main>
+  </div>
+</body>
+</html>
