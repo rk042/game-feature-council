@@ -1,19 +1,56 @@
 [build-system]
-requires = ["setuptools>=75,<81"]
+requires = ["setuptools>=77.0.3,<81"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "game-feature-council"
-version = "0.1.0"
+version = "1.0.0"
 description = "Repository-grounded game feature evaluation CLI"
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
+
+authors = [
+    { name = "Ketan Rathod" }
+]
+
+license = "Apache-2.0"
+license-files = [
+    "LICENSE",
+    "NOTICE",
+    "THIRD_PARTY_NOTICES.md",
+]
+
+keywords = [
+    "ai",
+    "agents",
+    "game-development",
+    "feature-evaluation",
+    "unity",
+    "mvp",
+]
+
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development",
+]
+
 dependencies = [
     "openai-agents==0.22.0",
     "pydantic==2.13.4",
     "rich==15.0.0",
     "typer==0.27.1",
 ]
+
+[project.urls]
+Homepage = "https://github.com/rk042/game-feature-council"
+Repository = "https://github.com/rk042/game-feature-council"
+Issues = "https://github.com/rk042/game-feature-council/issues"
 
 [project.scripts]
 council = "council.cli:console_main"
